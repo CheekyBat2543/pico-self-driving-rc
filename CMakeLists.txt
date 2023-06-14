@@ -10,6 +10,5 @@ pico_sdk_init()
 
 add_subdirectory(freertos)
 add_subdirectory(ProjectFiles)
-add_subdirectory(servo)
-add_subdirectory(ultrasonic)
+add_subdirectory(libraries)
 
