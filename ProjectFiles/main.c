@@ -10,12 +10,24 @@
 #include "servo.h"
 #include "ultrasonic.h"
 
+// Trigonometric Macros
+/*------------------------------------------------------------*/
+#define COS30                               0.8660254F
 #define COS45                               0.70710678118F
+#define COS60                               0.5F
+#define SIN30                               0.8660254F
+#define SIN45                               0.5F
+#define SIN60                               0.8660254F
+/*------------------------------------------------------------*/
 
+
+// Config Values
+/*------------------------------------------------------------*/
 #define ARRAY_SIZE                          5
 
 #define MIN_FRONT_DISTANCE                  10
 #define MAX_FRONT_DISTANCE                  400
+#define MAX_FRONT_DISTANCE_TO_TURN          50
 
 #define MAX_SIDE_SENSOR_DISTANCE            200
 #define MIN_SIDE_DISTANCE_TO_TURN           50
@@ -24,8 +36,8 @@
 #define MIN_SERVO_MICROS                    1000 // Right
 #define MAX_SERVO_MICROS                    2000 // Left
 
-#define FORWARD                             1
-#define BACKWARD                            0
+#define MOTOR_FORWARD                       1
+#define MOTOR_BACKWARD                      0
 
 #define MIN_MOTOR_FORWARD_MICROS            1580
 #define MAX_MOTOR_FORWARD_MICROS            1620
@@ -39,14 +51,14 @@
 #define SERVO_ROUND_INTERVAL                50
 #define FRONT_READ_FREQUENCY                5
 #define SIDE_READ_FREQUENCY                 5
+/*------------------------------------------------------------*/
 
-//FreeRTOS queue to send data from side sensors to servo
-static QueueHandle_t xSideQueue = NULL;
-static QueueHandle_t xMiddleQueue = NULL;
 
-uint map(uint input, uint a, uint b, uint c, uint d) {
-    return a + input * (b - a) / (d - c) ; 
-}
+// FreeRTOS queue to send data from side sensors to servo
+static QueueHandle_t xSideQueue      = NULL;
+static QueueHandle_t xFrontQueue     = NULL;
+static QueueHandle_t xConditionQueue = NULL;
+
 
 int getMedian(const int* arr, int size) {
     int sortedArray[size];
@@ -132,7 +144,7 @@ void front_sensor_task(void *pvParameters) {
         int distance_to_send = getMedian(distance_array, ARRAY_SIZE);
 
         printf("\nMiddle Distance = %d", distance_to_send);
-        xQueueOverwrite(xMiddleQueue, &distance_to_send);
+        xQueueOverwrite(xFrontQueue, &distance_to_send);
 
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)FRONT_READ_FREQUENCY);
         // middle_prev = middle_distance;
@@ -152,9 +164,9 @@ void side_sensor_task(void *pvParameters) {
     //initilization of ultrasonic sensors    
     setupUltrasonicPins(L_TRIG_PIN, L_ECHO_PIN);
     setupUltrasonicPins(R_TRIG_PIN, R_ECHO_PIN);
-
-    int left_prev = 0;
-    int right_prev = 0;
+    
+    int front_sensor_peeked = 0;
+    int motor_direction = MOTOR_FORWARD;
     int left_array[ARRAY_SIZE] = {0};
     int right_array[ARRAY_SIZE] = {0};
     int array_count = 0;
@@ -193,8 +205,12 @@ void side_sensor_task(void *pvParameters) {
         printf("\nLeft Distance = %dcm\tRight Distance = %dcm", left_distance, right_distance);
         
         //Calculate the turn amount using the conversion rate so that the servo can turn more smoothly
-        int value_to_turn; 
-        if(left_distance_median <= MIN_SIDE_DISTANCE_TO_TURN || right_distance_median <= MIN_SIDE_DISTANCE_TO_TURN) {
+        int value_to_turn;
+        xQueuePeek(xFrontQueue, &front_sensor_peeked, portMAX_DELAY);
+        if(front_sensor_peeked <= MIN_FRONT_DISTANCE) motor_direction = MOTOR_BACKWARD;
+        else                                          motor_direction = MOTOR_FORWARD;
+
+        if(left_distance_median <= MIN_SIDE_DISTANCE_TO_TURN || right_distance_median <= MIN_SIDE_DISTANCE_TO_TURN || front_sensor_peeked <= MAX_FRONT_DISTANCE_TO_TURN) {
             if(left_distance_median < right_distance_median){
                 value_to_turn =  (MAX_SERVO_MICROS - MIN_SERVO_MICROS) / 2;
             } else {
@@ -209,12 +225,12 @@ void side_sensor_task(void *pvParameters) {
         else {
             value_to_turn = 0;
         }
+
+        if(motor_direction = MOTOR_BACKWARD) value_to_turn *= -1;
+
         printf("\tValue to Turn = %d", value_to_turn);
         //Send the data to the queue so that the servo task can access it
         xQueueSend(xSideQueue, &value_to_turn, 0U);
-        //Store the previous distances measured 
-        right_prev = right_distance_median;
-        left_prev  = left_distance_median;
 
         //delay certain amount of ticks
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)SIDE_READ_FREQUENCY);
@@ -229,30 +245,29 @@ void motor_task_exp(void *pvParameters){
     float current_micros = MOTOR_BRAKE_MICROS;
     float prev_micros = MOTOR_BRAKE_MICROS;
     int micros_received = 0;
-    bool direction = FORWARD;
+    bool direction = MOTOR_FORWARD;
     //Initiliaze motor as servo so that we can control it through ESC
     setServo(MOTOR_PIN, current_micros);
     while(true) {
         //Wait for the front sensor to send data
-        xQueuePeek(xMiddleQueue, &micros_received, portMAX_DELAY);
+        xQueuePeek(xFrontQueue, &micros_received, portMAX_DELAY);
         if(micros_received <= MIN_FRONT_DISTANCE){
             //set the esc direction change 
-            if(direction != BACKWARD) {
-                changeMotorState(MOTOR_PIN, BACKWARD);
+            if(direction != MOTOR_BACKWARD) {
+                changeMotorState(MOTOR_PIN, MOTOR_BACKWARD);
             }
             //Go backwards if front distance is less than 10cm
-            // current_micros = MIDDLE_MICROS - (MIN_FRONT_DISTANCE - micros_received) * 25;
             current_micros = MOTOR_BACKWARD_MICROS;
-            direction = BACKWARD;
+            direction = MOTOR_BACKWARD;
 
         } else {
-            if(direction != FORWARD) {
-                changeMotorState(MOTOR_PIN, FORWARD);
+            if(direction != MOTOR_FORWARD) {
+                changeMotorState(MOTOR_PIN, MOTOR_FORWARD);
             }
             //Go forward if fron distance is more than 10cm
             current_micros = MIN_MOTOR_FORWARD_MICROS + (CONVERSION_RATE * micros_received);
             if(current_micros > MAX_MOTOR_FORWARD_MICROS) current_micros = MAX_MOTOR_FORWARD_MICROS;
-            direction = FORWARD;
+            direction = MOTOR_FORWARD;
         }
         printf("\nReceived Motor Input = %f\n", current_micros);
         setMillis(MOTOR_PIN, prev_micros * 0.8f + current_micros * 0.2f);
@@ -269,7 +284,7 @@ void servo_task(void *pvParameters) {
     float current_micros = MIDDLE_MICROS;
     int value_to_turn = 0;
     int front_sensor_peeked = 0;
-    bool direction = FORWARD;
+    bool direction = MOTOR_FORWARD;
     //Initiliaze servo
     setServo(SERVO_PIN, current_micros);
 
@@ -277,19 +292,13 @@ void servo_task(void *pvParameters) {
         //Waits until the queue receives data and writes the data to value_to_turn variable
         xQueueReceive(xSideQueue, &value_to_turn, portMAX_DELAY);
         printf("\nReceived Servo Input = %d", value_to_turn);
+
         //Turn the servo according to the data sent from the sensor task
-        // xQueueReceive(xMotorDirection, &direction, portMAX_DELAY);
-        xQueuePeek(xMiddleQueue, &front_sensor_peeked, portMAX_DELAY);
-        if(front_sensor_peeked >= MIN_FRONT_DISTANCE) direction = FORWARD;
-        else                                          direction = BACKWARD;
-        if(direction == FORWARD) {
-            current_micros = MIDDLE_MICROS - value_to_turn;
-            if(current_micros < MIN_SERVO_MICROS) current_micros = MIN_SERVO_MICROS;
-        } else {
-            current_micros = MIDDLE_MICROS + value_to_turn;
-            if(current_micros > MAX_SERVO_MICROS) current_micros = MAX_SERVO_MICROS;
-        }
+        current_micros = MIDDLE_MICROS - value_to_turn;
+        if(current_micros < MIN_SERVO_MICROS) current_micros = MIN_SERVO_MICROS;
+    
         setMillisRound(SERVO_PIN, current_micros, SERVO_ROUND_INTERVAL);
+
     }
 }
 
@@ -301,8 +310,10 @@ int main()
     stdio_init_all();
 
     //Create queue for the side sensors
-    xSideQueue   = xQueueCreate(1, sizeof(int));
-    xMiddleQueue = xQueueCreate(1, sizeof(int)); 
+    xSideQueue      = xQueueCreate(1, sizeof(int));
+    xFrontQueue     = xQueueCreate(1, sizeof(int));
+    xConditionQueue = xQueueCreate(1, sizeof(int));
+
     //Create freeRTOS tasks
     xTaskCreate(led_task, 
                 "LED_Task", 
@@ -315,7 +326,7 @@ int main()
                 "Front_Servor_Task", 
                 1024, 
                 NULL, 
-                4, 
+                5, 
                 NULL);
 
     xTaskCreate(motor_task_exp, 
