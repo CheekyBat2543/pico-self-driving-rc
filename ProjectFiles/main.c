@@ -10,14 +10,16 @@
 #include "servo.h"
 #include "ultrasonic.h"
 
+#define SINGLE_SENSOR_DEMO 1
+
 // Trigonometric Macros
 /*------------------------------------------------------------*/
-#define COS30                               0.8660254F
-#define COS45                               0.70710678118F
-#define COS60                               0.5F
-#define SIN30                               0.8660254F
-#define SIN45                               0.5F
-#define SIN60                               0.8660254F
+#define COS30                               0.8660254f
+#define COS45                               0.70710678118f
+#define COS60                               0.5f
+#define SIN30                               0.8660254f
+#define SIN45                               0.5f
+#define SIN60                               0.8660254f
 /*------------------------------------------------------------*/
 
 
@@ -25,9 +27,9 @@
 /*------------------------------------------------------------*/
 #define ARRAY_SIZE                          5
 
-#define MIN_FRONT_DISTANCE                  10
-#define MAX_FRONT_DISTANCE                  400
-#define MAX_FRONT_DISTANCE_TO_TURN          50
+#define MIN_FRONT_DISTANCE                  25
+#define MAX_FRONT_DISTANCE                  450
+#define MAX_FRONT_DISTANCE_TO_TURN          70
 
 #define MAX_SIDE_SENSOR_DISTANCE            200
 #define MIN_SIDE_DISTANCE_TO_TURN           50
@@ -39,18 +41,20 @@
 #define MOTOR_FORWARD                       1
 #define MOTOR_BACKWARD                      0
 
-#define MIN_MOTOR_FORWARD_MICROS            1580
-#define MAX_MOTOR_FORWARD_MICROS            1620
+#define MIN_MOTOR_FORWARD_MICROS            1565
+#define MAX_MOTOR_FORWARD_MICROS            1580
 #define MOTOR_BRAKE_MICROS                  1500
-#define MOTOR_BACKWARD_MICROS               1380
+#define MOTOR_BACKWARD_MICROS               1385
 #define MOTOR_FORWARD_ACTIVATION_MICROS     2000
 #define MOTOR_BACKWARD_ACTIVATION_MICROS    1000
 
-#define MOTOR_STATE_CHANGE_INTERVAL         5
+#define SERVO_ROUND_INTERVAL                50 
 
-#define SERVO_ROUND_INTERVAL                50
-#define FRONT_READ_FREQUENCY                5
-#define SIDE_READ_FREQUENCY                 5
+//Time in milliseconds
+#define MOTOR_STATE_CHANGE_INTERVAL         100
+#define FRONT_READ_PERIOD                   50 
+#define SIDE_READ_PERIOD                    50   
+#define LED_BLINK_PERIOD                    1000                
 /*------------------------------------------------------------*/
 
 
@@ -61,7 +65,7 @@ static QueueHandle_t xFrontQueue     = NULL;
 
 // Function definitions
 int getMedian(const int* arr, int size);
-void changeMotorState(uint motorPin, bool direction);
+void changeMotorState(uint motorPin, bool direction, int change_interval);
 
 
 // FreeRTOS Tasks:
@@ -74,9 +78,9 @@ void led_task() {
     gpio_set_dir(LED_PIN, GPIO_OUT);
     while (true) {
         gpio_put(LED_PIN, 1);
-        vTaskDelay(100);
+        vTaskDelay(LED_BLINK_PERIOD / portTICK_PERIOD_MS);
         gpio_put(LED_PIN, 0);
-        vTaskDelay(100);
+        vTaskDelay(LED_BLINK_PERIOD / portTICK_PERIOD_MS);
     }
 }
 
@@ -90,7 +94,6 @@ void front_sensor_task(void *pvParameters) {
     int middle_prev = 0;
     int distance_array[ARRAY_SIZE] = {0};
     int distance_count = 0;
-
 
     setupUltrasonicPins(M_TRIG_PIN, M_ECHO_PIN);
 
@@ -115,14 +118,14 @@ void front_sensor_task(void *pvParameters) {
         printf("\nMiddle Distance = %d", distance_to_send);
         xQueueOverwrite(xFrontQueue, &distance_to_send);
 
-        xTaskDelayUntil(&xNextWaitTime, (TickType_t)FRONT_READ_FREQUENCY);
+        xTaskDelayUntil(&xNextWaitTime, (TickType_t)FRONT_READ_PERIOD / portTICK_PERIOD_MS);
         // middle_prev = middle_distance;
     }
 }
 
-//sensor task that reads from left and right sensors, calculates the amount of turn the servo must make and sends it through a queue.
+// Sensor task that reads from left and right sensors, calculates the amount of turn the servo must make and sends it through a queue.
 void side_sensor_task(void *pvParameters) {
-    //GPIO Pins of the side sensors
+    // GPIO Pins of the side sensors
     const uint L_TRIG_PIN = 19;
     const uint L_ECHO_PIN = 18;
     const uint R_TRIG_PIN = 14;
@@ -130,7 +133,7 @@ void side_sensor_task(void *pvParameters) {
 
     const float CONVERSION_RATE = (float)(MAX_SERVO_MICROS - MIN_SERVO_MICROS) / (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN) / 2;
 
-    //initilization of ultrasonic sensors    
+    // Initilization of ultrasonic sensors    
     setupUltrasonicPins(L_TRIG_PIN, L_ECHO_PIN);
     setupUltrasonicPins(R_TRIG_PIN, R_ECHO_PIN);
     
@@ -139,7 +142,7 @@ void side_sensor_task(void *pvParameters) {
     int left_array[ARRAY_SIZE] = {0};
     int right_array[ARRAY_SIZE] = {0};
     int array_count = 0;
-    //Read from sensors until the array has only 1 empty slot before the main loop
+    // Read from sensors until the array has only 1 empty slot before the main loop
     for(; array_count < ARRAY_SIZE - 1; array_count++){
 
         int left_distance  = getCm(L_TRIG_PIN, L_ECHO_PIN);
@@ -151,26 +154,32 @@ void side_sensor_task(void *pvParameters) {
         right_array[array_count] = right_distance;
     }
 
-    //gets current time in terms of freeRTOS ticks
+    // Gets current time in terms of freeRTOS ticks
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount(); 
 
     while(true) {
-        //read from sensors
+        // Read from sensors
         int left_distance  = getCm(L_TRIG_PIN, L_ECHO_PIN);
         if (left_distance > MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
         int right_distance = getCm(R_TRIG_PIN, R_ECHO_PIN);
         if (right_distance > MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
 
-        //Add the current distance measurement to the array by overwriting the most outdated measurement
+        // Add the current distance measurement to the array by overwriting the most outdated measurement
         array_count++;
         if(array_count > ARRAY_SIZE - 1) array_count = 0;
         left_array[array_count]  = left_distance;
         right_array[array_count] = right_distance;
 
-        //Calculate the median measurements of the arrays
+        // Calculate the median measurements of the arrays
+        #ifdef SINGLE_SENSOR_DEMO
+        int left_distance_median  = 55;
+        int right_distance_median = 55;
+        #else 
         int left_distance_median  = getMedian(left_array, ARRAY_SIZE);
         int right_distance_median = getMedian(right_array, ARRAY_SIZE);
+        #endif
+
         printf("\nLeft Distance = %dcm\tRight Distance = %dcm", left_distance, right_distance);
         
         // Check the front distance so that if the front distance is small enough the car can still turn
@@ -187,62 +196,69 @@ void side_sensor_task(void *pvParameters) {
             }
         }
         else if (left_distance_median <= MAX_SIDE_DISTANCE_TO_TURN || right_distance_median <= MAX_SIDE_DISTANCE_TO_TURN) {
-            if(left_distance_median > MAX_SIDE_DISTANCE_TO_TURN)  left_distance_median = MAX_SIDE_DISTANCE_TO_TURN;
-            if(right_distance_median > MAX_SIDE_DISTANCE_TO_TURN) right_distance_median = MAX_SIDE_DISTANCE_TO_TURN;
+            if(left_distance_median >= MAX_SIDE_DISTANCE_TO_TURN)  left_distance_median = MAX_SIDE_DISTANCE_TO_TURN;
+            else if(right_distance_median >= MAX_SIDE_DISTANCE_TO_TURN) right_distance_median = MAX_SIDE_DISTANCE_TO_TURN;
             value_to_turn = (right_distance_median - left_distance_median) * CONVERSION_RATE;
         }
         else {
             value_to_turn = 0;
         }
 
-        if(motor_direction = MOTOR_BACKWARD) value_to_turn *= -1;
+        if(motor_direction == MOTOR_BACKWARD) value_to_turn *= -1;
 
         printf("\tValue to Turn = %d", value_to_turn);
-        //Send the data to the queue so that the servo task can access it
+        // Send the data to the queue so that the servo task can access it
         xQueueSend(xSideQueue, &value_to_turn, 0U);
 
-        //delay certain amount of ticks
-        xTaskDelayUntil(&xNextWaitTime, (TickType_t)SIDE_READ_FREQUENCY);
+        // Delay certain amount of ticks
+        xTaskDelayUntil(&xNextWaitTime, (TickType_t)SIDE_READ_PERIOD / portTICK_PERIOD_MS);
     }
 }
 
-//Motor task that waits for data from the front sensor that controls the robot's speed
+// Motor task that waits for data from the front sensor that controls the robot's speed
 void motor_task_exp(void *pvParameters){
     const uint MOTOR_PIN = 5;
-    //Motor Conversion Rate     ==>     1000 = Reverse Max,     1500 = Stop,    2000 = Forward Max.   
+    // Motor Conversion Rate     ==>     1000 = Reverse Max,     1500 = Stop,    2000 = Forward Max.   
     const float CONVERSION_RATE = (float)(MAX_MOTOR_FORWARD_MICROS - MIN_MOTOR_FORWARD_MICROS) / (MAX_FRONT_DISTANCE);
     float current_micros = MOTOR_BRAKE_MICROS;
     float prev_micros = MOTOR_BRAKE_MICROS;
     int micros_received = 0;
     bool direction = MOTOR_FORWARD;
-    //Initiliaze motor as servo so that we can control it through ESC
+    // Initiliaze motor as servo so that we can control it through ESC
     setServo(MOTOR_PIN, current_micros);
+    sleep_ms(2000);
     while(true) {
-        //Wait for the front sensor to send data
+        // Wait for the front sensor to send data
         xQueuePeek(xFrontQueue, &micros_received, portMAX_DELAY);
         if(micros_received <= MIN_FRONT_DISTANCE){
-            //set the esc direction change 
+            // Set the esc direction change 
             if(direction != MOTOR_BACKWARD) {
-                changeMotorState(MOTOR_PIN, MOTOR_BACKWARD);
+                changeMotorState(MOTOR_PIN, MOTOR_BACKWARD, MOTOR_STATE_CHANGE_INTERVAL);
             }
-            //Go backwards if front distance is less than 10cm
+            // Go backwards if front distance is less than 10cm
             current_micros = MOTOR_BACKWARD_MICROS;
             direction = MOTOR_BACKWARD;
 
         } else {
+            // Set the esc direction change 
             if(direction != MOTOR_FORWARD) {
-                changeMotorState(MOTOR_PIN, MOTOR_FORWARD);
+                changeMotorState(MOTOR_PIN, MOTOR_FORWARD, MOTOR_STATE_CHANGE_INTERVAL);
             }
-            //Go forward if fron distance is more than 10cm
-            current_micros = MIN_MOTOR_FORWARD_MICROS + (CONVERSION_RATE * micros_received);
-            if(current_micros > MAX_MOTOR_FORWARD_MICROS) current_micros = MAX_MOTOR_FORWARD_MICROS;
+            // Go forward if fron distance is more than specified amount
+            if(micros_received <= 250) {
+                current_micros = MIN_MOTOR_FORWARD_MICROS;
+            }
+            else if (micros_received >= 250) {
+                current_micros = MIN_MOTOR_FORWARD_MICROS + (CONVERSION_RATE * micros_received);
+                if(current_micros > MAX_MOTOR_FORWARD_MICROS) current_micros = MAX_MOTOR_FORWARD_MICROS;
+            }
             direction = MOTOR_FORWARD;
         }
         printf("\nReceived Motor Input = %f\n", current_micros);
-        setMillis(MOTOR_PIN, prev_micros * 0.8f + current_micros * 0.2f);
-        //Store previous speed for future use
+        setMillis(MOTOR_PIN, (float)(prev_micros * 0.90f + current_micros * 0.10f));
+        // Store previous speed for future use
         prev_micros = current_micros;
-        vTaskDelay(FRONT_READ_FREQUENCY);
+        vTaskDelay(FRONT_READ_PERIOD / portTICK_PERIOD_MS);
     }
 }
 
@@ -252,8 +268,7 @@ void servo_task(void *pvParameters) {
     const float MIDDLE_MICROS = (MAX_SERVO_MICROS + MIN_SERVO_MICROS) / 2;
     float current_micros = MIDDLE_MICROS;
     int value_to_turn = 0;
-    int front_sensor_peeked = 0;
-    bool direction = MOTOR_FORWARD;
+    int prev_micros = current_micros;
     //Initiliaze servo
     setServo(SERVO_PIN, current_micros);
 
@@ -264,10 +279,11 @@ void servo_task(void *pvParameters) {
 
         //Turn the servo according to the data sent from the sensor task
         current_micros = MIDDLE_MICROS - value_to_turn;
-        if(current_micros < MIN_SERVO_MICROS) current_micros = MIN_SERVO_MICROS;
+        if(current_micros <= MIN_SERVO_MICROS) current_micros = MIN_SERVO_MICROS;
+        if(current_micros >= MAX_SERVO_MICROS) current_micros = MAX_SERVO_MICROS;
     
-        setMillisRound(SERVO_PIN, current_micros, SERVO_ROUND_INTERVAL);
-
+        setMillisRound(SERVO_PIN, (float)(prev_micros * 0.9f + current_micros * 0.1f), SERVO_ROUND_INTERVAL);
+        prev_micros = current_micros; 
     }
 }
 
@@ -279,10 +295,11 @@ int main()
 {
     //initiliaze serial communication through USB
     stdio_init_all();
+    sleep_ms(1500);
 
     //Create queue for the side sensors
-    xSideQueue      = xQueueCreate(1, sizeof(int));
-    xFrontQueue     = xQueueCreate(1, sizeof(int));
+    xSideQueue  = xQueueCreate(1, sizeof(int));
+    xFrontQueue = xQueueCreate(1, sizeof(int));
 
     //Create freeRTOS tasks
     xTaskCreate(led_task, 
@@ -306,21 +323,21 @@ int main()
                 3, 
                 NULL);
 
-    xTaskCreate(side_sensor_task, 
-                "Side_Sensor_Task", 
-                1024, 
-                NULL, 
-                4, 
-                NULL);
-
     xTaskCreate(servo_task, 
                 "Servo_Task", 
                 1024, 
                 NULL, 
                 3, 
-                NULL);    
+                NULL);  
 
-    sleep_ms(1500);
+    xTaskCreate(side_sensor_task, 
+                "Side_Sensor_Task", 
+                2048, 
+                NULL, 
+                4, 
+                NULL);
+
+
     //start the main loop
     vTaskStartScheduler();
 
@@ -358,16 +375,20 @@ int getMedian(const int* arr, int size) {
     }
 }
 
-void changeMotorState(uint motorPin, bool direction){
+void changeMotorState(uint motorPin, bool direction, int change_interval){
     if(direction) {
+        setMillis(motorPin, MOTOR_BRAKE_MICROS);
+        vTaskDelay(change_interval * 4 / portTICK_PERIOD_MS);
         setMillis(motorPin, MOTOR_FORWARD_ACTIVATION_MICROS);
-        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
+        vTaskDelay(change_interval / 4 / portTICK_PERIOD_MS);
         setMillis(motorPin, MOTOR_BRAKE_MICROS);
-        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
+        vTaskDelay(change_interval / portTICK_PERIOD_MS);
     } else {
-        setMillis(motorPin, MOTOR_BACKWARD_ACTIVATION_MICROS);
-        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
         setMillis(motorPin, MOTOR_BRAKE_MICROS);
-        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
+        vTaskDelay(change_interval * 4 / portTICK_PERIOD_MS);
+        setMillis(motorPin, MOTOR_BACKWARD_ACTIVATION_MICROS);
+        vTaskDelay(change_interval / 4 / portTICK_PERIOD_MS);
+        setMillis(motorPin, MOTOR_BRAKE_MICROS);
+        vTaskDelay(change_interval / portTICK_PERIOD_MS);
     }
 }
