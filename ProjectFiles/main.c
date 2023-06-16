@@ -57,36 +57,17 @@
 // FreeRTOS queue to send data from side sensors to servo
 static QueueHandle_t xSideQueue      = NULL;
 static QueueHandle_t xFrontQueue     = NULL;
-static QueueHandle_t xConditionQueue = NULL;
 
 
-int getMedian(const int* arr, int size) {
-    int sortedArray[size];
-    for (int i = 0; i < size; i++) {
-        sortedArray[i] = arr[i];
-    }
-    // Insertion Sort
-    for (int i = 1; i < size; i++) {
-        int key = sortedArray[i];
-        int j = i - 1;
-        while (j >= 0 && sortedArray[j] > key) {
-            sortedArray[j + 1] = sortedArray[j];
-            j--;
-        }
-        sortedArray[j + 1] = key;
-    }
+// Function definitions
+int getMedian(const int* arr, int size);
+void changeMotorState(uint motorPin, bool direction);
 
-    int medianIndex = size / 2;
-    if (size % 2 == 0) {
-        // Average of two middle elements for even-sized array
-        return (sortedArray[medianIndex - 1] + sortedArray[medianIndex]) / 2;
-    } else {
-        // Middle element for odd-sized array
-        return sortedArray[medianIndex];
-    }
-}
 
-//Led task that blinks so that we can observe if the board works or not
+// FreeRTOS Tasks:
+/*-------------------------------------------------------------*/
+
+// Led task that blinks so that we can observe if the board works or not
 void led_task() {   
     const uint LED_PIN = 25; 
     gpio_init(LED_PIN);
@@ -99,19 +80,7 @@ void led_task() {
     }
 }
 
-void changeMotorState(uint motorPin, bool direction){
-    if(direction) {
-        setMillis(motorPin, MOTOR_FORWARD_ACTIVATION_MICROS);
-        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
-        setMillis(motorPin, MOTOR_BRAKE_MICROS);
-        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
-    } else {
-        setMillis(motorPin, MOTOR_BACKWARD_ACTIVATION_MICROS);
-        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
-        setMillis(motorPin, MOTOR_BRAKE_MICROS);
-        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
-    }
-}
+
 
 //Front servo task that measures the distance in front and sends it to the DC motor
 void front_sensor_task(void *pvParameters) {
@@ -204,7 +173,7 @@ void side_sensor_task(void *pvParameters) {
         int right_distance_median = getMedian(right_array, ARRAY_SIZE);
         printf("\nLeft Distance = %dcm\tRight Distance = %dcm", left_distance, right_distance);
         
-        //Calculate the turn amount using the conversion rate so that the servo can turn more smoothly
+        // Check the front distance so that if the front distance is small enough the car can still turn
         int value_to_turn;
         xQueuePeek(xFrontQueue, &front_sensor_peeked, portMAX_DELAY);
         if(front_sensor_peeked <= MIN_FRONT_DISTANCE) motor_direction = MOTOR_BACKWARD;
@@ -239,7 +208,7 @@ void side_sensor_task(void *pvParameters) {
 
 //Motor task that waits for data from the front sensor that controls the robot's speed
 void motor_task_exp(void *pvParameters){
-    const uint MOTOR_PIN = 2;
+    const uint MOTOR_PIN = 5;
     //Motor Conversion Rate     ==>     1000 = Reverse Max,     1500 = Stop,    2000 = Forward Max.   
     const float CONVERSION_RATE = (float)(MAX_MOTOR_FORWARD_MICROS - MIN_MOTOR_FORWARD_MICROS) / (MAX_FRONT_DISTANCE);
     float current_micros = MOTOR_BRAKE_MICROS;
@@ -278,7 +247,7 @@ void motor_task_exp(void *pvParameters){
 }
 
 void servo_task(void *pvParameters) {
-    const uint SERVO_PIN = 1;
+    const uint SERVO_PIN = 2;
     //Servo Conversion Rate      ==>     1000us = 0 Degrees,   1500us = 60 Degrees,   2000us = 120 Degrees.
     const float MIDDLE_MICROS = (MAX_SERVO_MICROS + MIN_SERVO_MICROS) / 2;
     float current_micros = MIDDLE_MICROS;
@@ -302,7 +271,9 @@ void servo_task(void *pvParameters) {
     }
 }
 
+
 /*-----------------------------------------------------------*/
+
 
 int main()
 {
@@ -312,7 +283,6 @@ int main()
     //Create queue for the side sensors
     xSideQueue      = xQueueCreate(1, sizeof(int));
     xFrontQueue     = xQueueCreate(1, sizeof(int));
-    xConditionQueue = xQueueCreate(1, sizeof(int));
 
     //Create freeRTOS tasks
     xTaskCreate(led_task, 
@@ -356,4 +326,48 @@ int main()
 
     //The code never reaches her
     while(1){};
+}
+
+
+/*--------------------------------------------------------*/
+
+
+int getMedian(const int* arr, int size) {
+    int sortedArray[size];
+    for (int i = 0; i < size; i++) {
+        sortedArray[i] = arr[i];
+    }
+    // Insertion Sort
+    for (int i = 1; i < size; i++) {
+        int key = sortedArray[i];
+        int j = i - 1;
+        while (j >= 0 && sortedArray[j] > key) {
+            sortedArray[j + 1] = sortedArray[j];
+            j--;
+        }
+        sortedArray[j + 1] = key;
+    }
+
+    int medianIndex = size / 2;
+    if (size % 2 == 0) {
+        // Average of two middle elements for even-sized array
+        return (sortedArray[medianIndex - 1] + sortedArray[medianIndex]) / 2;
+    } else {
+        // Middle element for odd-sized array
+        return sortedArray[medianIndex];
+    }
+}
+
+void changeMotorState(uint motorPin, bool direction){
+    if(direction) {
+        setMillis(motorPin, MOTOR_FORWARD_ACTIVATION_MICROS);
+        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
+        setMillis(motorPin, MOTOR_BRAKE_MICROS);
+        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
+    } else {
+        setMillis(motorPin, MOTOR_BACKWARD_ACTIVATION_MICROS);
+        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
+        setMillis(motorPin, MOTOR_BRAKE_MICROS);
+        vTaskDelay(MOTOR_STATE_CHANGE_INTERVAL);
+    }
 }
