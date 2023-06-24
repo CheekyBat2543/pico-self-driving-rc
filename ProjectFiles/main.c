@@ -53,11 +53,11 @@
 #define MOTOR_BRAKE_PERIOD                  500  // Millisecond
 
 #define MAX_SIDE_SENSOR_DISTANCE            200  // CM
-#define MIN_SIDE_DISTANCE_TO_TURN           35   // CM
-#define MAX_SIDE_DISTANCE_TO_TURN           70  // CM
+#define MIN_SIDE_DISTANCE_TO_TURN           30   // CM
+#define MAX_SIDE_DISTANCE_TO_TURN           80  // CM
 
-#define MIN_SERVO_MICROS                    1050 // Right
-#define MAX_SERVO_MICROS                    1950 // Left
+#define MIN_SERVO_MICROS                    1000 // Right
+#define MAX_SERVO_MICROS                    2000 // Left
 
 #define MOTOR_FORWARD_DIRECTION             1   
 #define MOTOR_BACKWARD_DIRECTION            0
@@ -70,7 +70,7 @@
 #define MOTOR_FORWARD_ACTIVATION_MICROS     2000 // Microseconds
 #define MOTOR_BACKWARD_ACTIVATION_MICROS    1000 // Microseconds
 
-#define SERVO_ROUND_INTERVAL                50 
+#define SERVO_ROUND_INTERVAL                20 
 
 //Time in milliseconds
 #define MOTOR_STATE_CHANGE_INTERVAL         800  // Milliseconds
@@ -159,8 +159,8 @@ void side_sensor_task(void *pvParameters) {
     const uint right_echo_pin = RIGHT_ECHO_PIN;
 
     const float PROPORTIONAL_GAIN = (float)(MAX_SERVO_MICROS - MIN_SERVO_MICROS) / (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN) / 2;
-    const float DERIVATIVE_GAIN = 5.0f;
-    const float INTEGRAL_GAIN = 0.05f;
+    const float DERIVATIVE_GAIN = 0.006f;
+    const float INTEGRAL_GAIN = 0.0005f;
     const float FULL_RIGHT_DIRECTION = (MAX_SERVO_MICROS - MIN_SERVO_MICROS) / 2;
     const float FULL_LEFT_DIRECTION  = -1*(MAX_SERVO_MICROS - MIN_SERVO_MICROS) / 2;
     // Initilization of ultrasonic sensors    
@@ -205,8 +205,8 @@ void side_sensor_task(void *pvParameters) {
 
         // Calculate the median measurements of the arrays
         #ifdef SINGLE_SENSOR_DEMO
-        int left_distance_median  = 55;
-        int right_distance_median = 55;
+        int left_distance_median  = 100;
+        int right_distance_median = 100;
         #else 
         int left_distance_median  = getMedian(left_array, ARRAY_SIZE);
         int right_distance_median = getMedian(right_array, ARRAY_SIZE);
@@ -250,7 +250,7 @@ void side_sensor_task(void *pvParameters) {
             integral += proportional_turn * INTEGRAL_GAIN;
         }
         // Get the PID value by adding proportional and derivative terms
-        float value_to_turn = proportional_turn + (derivative * DERIVATIVE_GAIN) + (integral * INTEGRAL_GAIN);
+        float value_to_turn = proportional_turn - (derivative * DERIVATIVE_GAIN) + (integral * INTEGRAL_GAIN);
 
         startTime = endTime;
         prev_proportional_turn = proportional_turn;
@@ -258,7 +258,7 @@ void side_sensor_task(void *pvParameters) {
         // Reverse the turning direction if the motor is going backwards
         if(motor_direction == MOTOR_BACKWARD_DIRECTION) value_to_turn *= -1;
 
-        printf("\tValue to Turn = %f", value_to_turn);
+        printf("\tTurn_Value = %f, Proportional = %f, Derivative = %f, Integral = %f",value_to_turn, proportional_turn, derivative*DERIVATIVE_GAIN, integral*INTEGRAL_GAIN);
         // Send the data to the queue so that the servo task can access it
         xQueueSend(xSideQueue, &value_to_turn, 0U);
         // Delay certain amount of ticks
@@ -336,7 +336,7 @@ void servo_task(void *pvParameters) {
     while (true) {   
         //Waits until the queue receives data and writes the data to value_to_turn variable
         xQueueReceive(xSideQueue, &value_to_turn, portMAX_DELAY);
-        printf("\nReceived Servo Input = %d", value_to_turn);
+        printf("\nReceived Servo Input = %f", value_to_turn);
 
         //Turn the servo according to the data sent from the sensor task
         current_micros = MIDDLE_MICROS - value_to_turn;
