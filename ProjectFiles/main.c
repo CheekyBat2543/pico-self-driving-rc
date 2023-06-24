@@ -159,7 +159,7 @@ void side_sensor_task(void *pvParameters) {
     const uint right_echo_pin = RIGHT_ECHO_PIN;
 
     const float PROPORTIONAL_GAIN = (float)(MAX_SERVO_MICROS - MIN_SERVO_MICROS) / (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN) / 2;
-    const int DERIVATIVE_GAIN = 5;
+    const float DERIVATIVE_GAIN = 5.0f;
     const float FULL_RIGHT_DIRECTION = (MAX_SERVO_MICROS - MIN_SERVO_MICROS) / 2;
     const float FULL_LEFT_DIRECTION  = -1*(MAX_SERVO_MICROS - MIN_SERVO_MICROS) / 2;
     // Initilization of ultrasonic sensors    
@@ -187,8 +187,8 @@ void side_sensor_task(void *pvParameters) {
 
     // Gets current time in terms of freeRTOS ticks
     TickType_t xNextWaitTime;
+    absolute_time_t startTime = get_absolute_time();
     xNextWaitTime = xTaskGetTickCount(); 
-
     while(true) {
         // Read from sensors
         int left_distance  = getCm(left_trig_pin, left_echo_pin);
@@ -216,9 +216,11 @@ void side_sensor_task(void *pvParameters) {
         // Check the front distance so that if the front distance is small enough the car can still turn
         float proportional_turn;
         xQueuePeek(xFrontQueue, &front_sensor_peeked, portMAX_DELAY);
+        // Check if the car is going forward or backward
         if(front_sensor_peeked <= MIN_FRONT_DISTANCE) motor_direction = MOTOR_BACKWARD_DIRECTION;
         else                                          motor_direction = MOTOR_FORWARD_DIRECTION;
 
+        // Calculate the proportional term
         if(left_distance_median <= MIN_SIDE_DISTANCE_TO_TURN || right_distance_median <= MIN_SIDE_DISTANCE_TO_TURN || front_sensor_peeked <= MAX_FRONT_DISTANCE_TO_TURN) {
             if(left_distance_median < right_distance_median){
                 proportional_turn = FULL_RIGHT_DIRECTION;
@@ -236,11 +238,18 @@ void side_sensor_task(void *pvParameters) {
         else {
             proportional_turn = 0;
         }
-        float derivative = (proportional_turn - prev_proportional_turn) / SIDE_SENSOR_READ_PERIOD;
+        // get the current time
+        absolute_time_t endTime = get_absolute_time(); 
+        // convert the time difference between readings from microseconds to seconds
+        float delta_T = (float)absolute_time_diff_us(startTime, endTime) / 1000000; 
+        float derivative = (proportional_turn - prev_proportional_turn) / delta_T;
+        // Get the PID value by adding proportional and derivative terms (No integral currently)
         float value_to_turn = proportional_turn + (derivative * DERIVATIVE_GAIN);
-        
+
+        startTime = endTime;
         prev_proportional_turn = proportional_turn;
 
+        // Reverse the turning direction if the motor is going backwards
         if(motor_direction == MOTOR_BACKWARD_DIRECTION) value_to_turn *= -1;
 
         printf("\tValue to Turn = %f", value_to_turn);
@@ -378,7 +387,7 @@ int main()
 
     xTaskCreate(side_sensor_task, 
                 "Side_Sensor_Task", 
-                2048, 
+                4096, 
                 NULL, 
                 4, 
                 NULL);
