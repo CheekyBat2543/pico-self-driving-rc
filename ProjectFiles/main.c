@@ -53,11 +53,11 @@
 #define MOTOR_BRAKE_PERIOD                  500  // Millisecond
 
 #define MAX_SIDE_SENSOR_DISTANCE            200  // CM
-#define MIN_SIDE_DISTANCE_TO_TURN           50   // CM
-#define MAX_SIDE_DISTANCE_TO_TURN           100  // CM
+#define MIN_SIDE_DISTANCE_TO_TURN           35   // CM
+#define MAX_SIDE_DISTANCE_TO_TURN           70  // CM
 
-#define MIN_SERVO_MICROS                    1000 // Right
-#define MAX_SERVO_MICROS                    2000 // Left
+#define MIN_SERVO_MICROS                    1050 // Right
+#define MAX_SERVO_MICROS                    1950 // Left
 
 #define MOTOR_FORWARD_DIRECTION             1   
 #define MOTOR_BACKWARD_DIRECTION            0
