@@ -160,6 +160,7 @@ void side_sensor_task(void *pvParameters) {
 
     const float PROPORTIONAL_GAIN = (float)(MAX_SERVO_MICROS - MIN_SERVO_MICROS) / (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN) / 2;
     const float DERIVATIVE_GAIN = 5.0f;
+    const float INTEGRAL_GAIN = 0.05f;
     const float FULL_RIGHT_DIRECTION = (MAX_SERVO_MICROS - MIN_SERVO_MICROS) / 2;
     const float FULL_LEFT_DIRECTION  = -1*(MAX_SERVO_MICROS - MIN_SERVO_MICROS) / 2;
     // Initilization of ultrasonic sensors    
@@ -243,8 +244,13 @@ void side_sensor_task(void *pvParameters) {
         // convert the time difference between readings from microseconds to seconds
         float delta_T = (float)absolute_time_diff_us(startTime, endTime) / 1000000; 
         float derivative = (proportional_turn - prev_proportional_turn) / delta_T;
-        // Get the PID value by adding proportional and derivative terms (No integral currently)
-        float value_to_turn = proportional_turn + (derivative * DERIVATIVE_GAIN);
+        // The integral term fine tunes the turning angle only during small turn angles
+        float integral = 0;
+        if((-100 <= proportional_turn) && (proportional_turn <= 100)){
+            integral += proportional_turn * INTEGRAL_GAIN;
+        }
+        // Get the PID value by adding proportional and derivative terms
+        float value_to_turn = proportional_turn + (derivative * DERIVATIVE_GAIN) + (integral * INTEGRAL_GAIN);
 
         startTime = endTime;
         prev_proportional_turn = proportional_turn;
