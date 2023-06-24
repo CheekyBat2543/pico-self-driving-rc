@@ -10,7 +10,8 @@
 #include "servo.h"
 #include "ultrasonic.h"
 
-#define SINGLE_SENSOR_DEMO 1
+// #define SINGLE_SENSOR_DEMO 1
+// #define SIDE_SENSOR_DEMO 1
 
 // Trigonometric Macros
 /*------------------------------------------------------------*/
@@ -27,12 +28,12 @@
 /*------------------------------------------------------------*/
 #define LED_PIN         25
 
-#define FRONT_TRIG_PIN  16
-#define FRONT_ECHO_PIN  17
+#define RIGHT_TRIG_PIN  16
+#define RIGHT_ECHO_PIN  17
 #define LEFT_TRIG_PIN   19
 #define LEFT_ECHO_PIN   18
-#define RIGHT_TRIG_PIN  14
-#define RIGHT_ECHO_PIN  15
+#define FRONT_TRIG_PIN  21 
+#define FRONT_ECHO_PIN  20
 
 #define MOTOR_ESC_PIN   5
 #define SERVO_PIN       2
@@ -43,38 +44,39 @@
 /*------------------------------------------------------------*/
 #define ARRAY_SIZE                          5
 
-#define MIN_FRONT_DISTANCE                  28
-#define MAX_FRONT_DISTANCE                  450
-#define MAX_FRONT_DISTANCE_TO_TURN          80
-#define MIN_FRONT_DISTANCE_TO_ACCELERATE    400
+#define MIN_FRONT_DISTANCE                  28   // CM
+#define MAX_FRONT_DISTANCE                  450  // CM
+#define MAX_FRONT_DISTANCE_TO_TURN          80   // CM
+#define MIN_FRONT_DISTANCE_TO_ACCELERATE    400  // CM
 
-#define MOTOR_DISTANCE_TO_BRAKE             50
-#define MOTOR_BRAKE_PERIOD                  750 // Millisecond
+#define MOTOR_DISTANCE_TO_BRAKE             50   // CM
+#define MOTOR_BRAKE_PERIOD                  500  // Millisecond
 
-#define MAX_SIDE_SENSOR_DISTANCE            200
-#define MIN_SIDE_DISTANCE_TO_TURN           50
-#define MAX_SIDE_DISTANCE_TO_TURN           100
+#define MAX_SIDE_SENSOR_DISTANCE            200  // CM
+#define MIN_SIDE_DISTANCE_TO_TURN           50   // CM
+#define MAX_SIDE_DISTANCE_TO_TURN           100  // CM
 
 #define MIN_SERVO_MICROS                    1000 // Right
 #define MAX_SERVO_MICROS                    2000 // Left
 
-#define MOTOR_FORWARD_DIRECTION             1
+#define MOTOR_FORWARD_DIRECTION             1   
 #define MOTOR_BACKWARD_DIRECTION            0
 
-#define MIN_MOTOR_FORWARD_MICROS            1570
-#define MAX_MOTOR_FORWARD_MICROS            1580
-#define MOTOR_BRAKE_MICROS                  1500
-#define MOTOR_BACKWARD_MICROS               1370
-#define MOTOR_FORWARD_ACTIVATION_MICROS     2000
-#define MOTOR_BACKWARD_ACTIVATION_MICROS    1000
+#define MOTOR_TURNING_MICROS                1565 // Microseconds                  
+#define MIN_MOTOR_FORWARD_MICROS            1570 // Microseconds
+#define MAX_MOTOR_FORWARD_MICROS            1580 // Microseconds
+#define MOTOR_BRAKE_MICROS                  1500 // Microseconds
+#define MOTOR_BACKWARD_MICROS               1370 // Microseconds
+#define MOTOR_FORWARD_ACTIVATION_MICROS     2000 // Microseconds
+#define MOTOR_BACKWARD_ACTIVATION_MICROS    1000 // Microseconds
 
 #define SERVO_ROUND_INTERVAL                50 
 
 //Time in milliseconds
-#define MOTOR_STATE_CHANGE_INTERVAL         800
-#define FRONT_READ_PERIOD                   40 
-#define SIDE_READ_PERIOD                    40   
-#define LED_BLINK_PERIOD                    1000                
+#define MOTOR_STATE_CHANGE_INTERVAL         800  // Milliseconds
+#define FRONT_READ_PERIOD                   50   // Milliseconds
+#define SIDE_READ_PERIOD                    50   // Milliseconds
+#define LED_BLINK_PERIOD                    1000 // Milliseconds               
 /*------------------------------------------------------------*/
 
 
@@ -133,8 +135,12 @@ void front_sensor_task(void *pvParameters) {
 
         distance_array[distance_count] = middle_distance;
 
+        #ifdef SIDE_SENSOR_DEMO
+        int distance_to_send = 100;
+        #else 
         int distance_to_send = getMedian(distance_array, ARRAY_SIZE);
-
+        #endif
+        
         printf("\nMiddle Distance = %d", distance_to_send);
         xQueueOverwrite(xFrontQueue, &distance_to_send);
 
@@ -217,7 +223,7 @@ void side_sensor_task(void *pvParameters) {
         }
         else if (left_distance_median <= MAX_SIDE_DISTANCE_TO_TURN || right_distance_median <= MAX_SIDE_DISTANCE_TO_TURN) {
             if(left_distance_median >= MAX_SIDE_DISTANCE_TO_TURN)  left_distance_median = MAX_SIDE_DISTANCE_TO_TURN;
-            else if(right_distance_median >= MAX_SIDE_DISTANCE_TO_TURN) right_distance_median = MAX_SIDE_DISTANCE_TO_TURN;
+            if(right_distance_median >= MAX_SIDE_DISTANCE_TO_TURN) right_distance_median = MAX_SIDE_DISTANCE_TO_TURN;
             value_to_turn = (right_distance_median - left_distance_median) * CONVERSION_RATE;
         }
         else {
@@ -261,24 +267,26 @@ void motor_task_exp(void *pvParameters){
         }
 
         if(micros_received <= MIN_FRONT_DISTANCE){
-            // Set the esc direction change 
-            if(direction != MOTOR_BACKWARD_DIRECTION) {
+            // Set the esc direction change
+            if(direction != MOTOR_BACKWARD_DIRECTION) 
                 changeMotorState(motor_pin, &direction, MOTOR_STATE_CHANGE_INTERVAL);
-            }
+            
             // Go backwards if front distance is less than 10cm
             current_micros = MOTOR_BACKWARD_MICROS;
-
         } else {
             // Set the esc direction change 
-            if(direction != MOTOR_FORWARD_DIRECTION) {
+            if(direction != MOTOR_FORWARD_DIRECTION) 
                 changeMotorState(motor_pin, &direction, MOTOR_STATE_CHANGE_INTERVAL);
-            }
+            
             // Go forward if fron distance is more than specified amount
-            if(micros_received <= MIN_FRONT_DISTANCE_TO_ACCELERATE) {
+            if(micros_received <= MAX_FRONT_DISTANCE_TO_TURN){
+                current_micros = MOTOR_TURNING_MICROS;
+            }
+            else if(micros_received <= MIN_FRONT_DISTANCE_TO_ACCELERATE) {
                 current_micros = MIN_MOTOR_FORWARD_MICROS;
             }
             else if (micros_received >= MIN_FRONT_DISTANCE_TO_ACCELERATE) {
-                current_micros = MIN_MOTOR_FORWARD_MICROS + (CONVERSION_RATE * micros_received);
+                current_micros = MIN_MOTOR_FORWARD_MICROS + (float)(CONVERSION_RATE * micros_received);
                 if(current_micros > MAX_MOTOR_FORWARD_MICROS) current_micros = MAX_MOTOR_FORWARD_MICROS;
             }
         }
@@ -339,21 +347,21 @@ int main()
 
     xTaskCreate(front_sensor_task, 
                 "Front_Servor_Task", 
-                1024, 
+                2048, 
                 NULL, 
                 5, 
                 NULL);
 
     xTaskCreate(motor_task_exp, 
                 "Motor_Task", 
-                1024, 
+                2048, 
                 NULL, 
                 3, 
                 NULL);
 
     xTaskCreate(servo_task, 
                 "Servo_Task", 
-                1024, 
+                2048, 
                 NULL, 
                 3, 
                 NULL);  
