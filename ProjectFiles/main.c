@@ -107,8 +107,6 @@ void led_task() {
     }
 }
 
-
-
 //Front servo task that measures the distance in front and sends it to the DC motor
 void front_sensor_task(void *pvParameters) {
     const uint front_trig_pin = FRONT_TRIG_PIN;
@@ -250,7 +248,7 @@ void side_sensor_task(void *pvParameters) {
             integral += proportional_turn;
         }
         // Get the PID value by adding proportional and derivative terms
-        float value_to_turn = (float)(proportional_turn * PROPORTIONAL_GAIN) - (derivative * DERIVATIVE_GAIN) + (integral * INTEGRAL_GAIN);
+        float value_to_turn = (float)(proportional_turn * PROPORTIONAL_GAIN) + (derivative * DERIVATIVE_GAIN) + (integral * INTEGRAL_GAIN);
 
         startTime = endTime;
         prev_proportional_turn = proportional_turn;
