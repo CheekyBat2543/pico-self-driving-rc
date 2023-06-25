@@ -70,7 +70,7 @@
 #define MOTOR_FORWARD_ACTIVATION_MICROS     2000 // Microseconds
 #define MOTOR_BACKWARD_ACTIVATION_MICROS    1000 // Microseconds
 
-#define SERVO_ROUND_INTERVAL                20 
+#define SERVO_ROUND_INTERVAL                10 
 
 //Time in milliseconds
 #define MOTOR_STATE_CHANGE_INTERVAL         800  // Milliseconds
@@ -272,7 +272,6 @@ void motor_task_exp(void *pvParameters){
     // Motor Conversion Rate     ==>     1000 = Reverse Max,     1500 = Stop,    2000 = Forward Max.   
     const float CONVERSION_RATE = (float)(MAX_MOTOR_FORWARD_MICROS - MIN_MOTOR_FORWARD_MICROS) / (MAX_FRONT_DISTANCE);
     float current_micros = MOTOR_BRAKE_MICROS;
-    float prev_micros = MOTOR_BRAKE_MICROS;
     int micros_received = 0;
     bool direction = MOTOR_FORWARD_DIRECTION;
     bool brake_condition = true;
@@ -316,9 +315,8 @@ void motor_task_exp(void *pvParameters){
             }
         }
         printf("\nReceived Motor Input = %f\n", current_micros);
-        setMillis(motor_pin, (float)(prev_micros * 0.90f + current_micros * 0.10f));
+        setMillis(motor_pin, current_micros);
         // Store previous speed for future use
-        prev_micros = current_micros;
         vTaskDelay((TickType_t)FRONT_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
     }
 }
@@ -329,7 +327,6 @@ void servo_task(void *pvParameters) {
     const float MIDDLE_MICROS = (MAX_SERVO_MICROS + MIN_SERVO_MICROS) / 2;
     float current_micros = MIDDLE_MICROS;
     float value_to_turn = 0;
-    float prev_micros = current_micros;
     //Initiliaze servo
     setServo(servo_pin, current_micros);
 
@@ -343,8 +340,7 @@ void servo_task(void *pvParameters) {
         if(current_micros <= MIN_SERVO_MICROS) current_micros = MIN_SERVO_MICROS;
         if(current_micros >= MAX_SERVO_MICROS) current_micros = MAX_SERVO_MICROS;
 
-        setMillis(servo_pin, roundToIntervalFloat((float)(prev_micros * 0.9f + current_micros * 0.1f), SERVO_ROUND_INTERVAL));
-        prev_micros = current_micros; 
+        setMillis(servo_pin, roundToIntervalFloat((current_micros), SERVO_ROUND_INTERVAL));
     }
 }
 
@@ -386,7 +382,7 @@ int main()
 
     xTaskCreate(servo_task, 
                 "Servo_Task", 
-                2048, 
+                512, 
                 NULL, 
                 3, 
                 NULL);  
