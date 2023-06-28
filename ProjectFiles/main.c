@@ -155,7 +155,7 @@ void side_sensor_task(void *pvParameters) {
     const uint left_echo_pin  = LEFT_ECHO_PIN;
     const uint right_trig_pin = RIGHT_TRIG_PIN;
     const uint right_echo_pin = RIGHT_ECHO_PIN;
-
+    // Calculate constant terms
     const float PROPORTIONAL_GAIN = (float)(MAX_SERVO_MICROS - MIN_SERVO_MICROS - 300) / (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN) / 2;
     const float DERIVATIVE_GAIN = -0.1f;
     const float INTEGRAL_GAIN = 0.15f;
@@ -237,22 +237,23 @@ void side_sensor_task(void *pvParameters) {
         }
         // get the current time
         absolute_time_t endTime = get_absolute_time(); 
-        // convert the time difference between readings from microseconds to seconds
+
+        // convert the time difference between readings from microseconds to seconds by multiplying derivative by 10^6
         float delta_T = (float)(absolute_time_diff_us(startTime, endTime)); 
         float derivative = 1000000*(proportional_turn - prev_proportional_turn) / delta_T;
-        // The integral term fine tunes the turning angle only during small turn angles
 
-        // if(((FULL_RIGHT_DIRECTION / 2) <= proportional_turn) && (proportional_turn <= (FULL_LEFT_DIRECTION / 2))){
+        // Calculate the integral, and set its bound so that it cannot increase indefinitely
         integral += proportional_turn;
         if(integral >= 150 / INTEGRAL_GAIN) integral = 150 / INTEGRAL_GAIN;
         else if (integral <= -150 / INTEGRAL_GAIN) integral = -150 / INTEGRAL_GAIN; 
-        // }
-        // Get the PID value by adding proportional and derivative terms
+    
+        // Get the PID value by applying gains to the terms and adding them up
         float proportional_term = (proportional_turn * PROPORTIONAL_GAIN);
         float derivative_term   = (derivative * DERIVATIVE_GAIN);
         float integral_term     = (integral * INTEGRAL_GAIN);
         float value_to_turn = proportional_term + derivative_term + integral_term;
 
+        // Save the current time and current proportional turn to calculate derivative in the next loop
         startTime = endTime;
         prev_proportional_turn = proportional_turn;
 

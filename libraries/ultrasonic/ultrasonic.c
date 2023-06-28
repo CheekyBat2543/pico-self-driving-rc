@@ -44,13 +44,7 @@ uint64_t getPulse(uint trigPin, uint echoPin)
 uint64_t getCm(uint trigPin, uint echoPin)
 {
     uint64_t pulseLength = getPulse(trigPin, echoPin);
-    return pulseLength / 29 / 2;
-}
-
-float getCmFloat(uint trigPin, uint echoPin)
-{
-    uint64_t pulseLength = getPulse(trigPin, echoPin);
-    return (float)pulseLength * 0.017f;
+    return pulseLength * 0.017f;
 }
 
 uint64_t getInch(uint trigPin, uint echoPin)
