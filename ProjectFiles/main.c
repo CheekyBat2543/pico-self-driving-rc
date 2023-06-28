@@ -53,7 +53,7 @@
 #define MOTOR_BRAKE_PERIOD                  500  // Millisecond
 
 #define MAX_SIDE_SENSOR_DISTANCE            200  // CM
-#define MIN_SIDE_DISTANCE_TO_TURN           20   // CM
+#define MIN_SIDE_DISTANCE_TO_TURN           5   // CM
 #define MAX_SIDE_DISTANCE_TO_TURN           60  // CM
 
 #define MIN_SERVO_MICROS                    1000 // Right
@@ -140,7 +140,7 @@ void front_sensor_task(void *pvParameters) {
         int distance_to_send = getMedian(distance_array, ARRAY_SIZE);
         #endif
         
-        printf("\nMiddle Distance = %d", distance_to_send);
+        /*printf("\nMiddle Distance = %d", distance_to_send);*/
         xQueueOverwrite(xFrontQueue, &distance_to_send);
 
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)FRONT_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
@@ -156,9 +156,9 @@ void side_sensor_task(void *pvParameters) {
     const uint right_trig_pin = RIGHT_TRIG_PIN;
     const uint right_echo_pin = RIGHT_ECHO_PIN;
 
-    const float PROPORTIONAL_GAIN = (float)(MAX_SERVO_MICROS - MIN_SERVO_MICROS) / (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN) / 2;
-    const float DERIVATIVE_GAIN = 0.09f;
-    const float INTEGRAL_GAIN = 0.005f;
+    const float PROPORTIONAL_GAIN = (float)(MAX_SERVO_MICROS - MIN_SERVO_MICROS - 300) / (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN) / 2;
+    const float DERIVATIVE_GAIN = -0.1f;
+    const float INTEGRAL_GAIN = 0.15f;
     const float FULL_RIGHT_DIRECTION = -1*(MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN);
     const float FULL_LEFT_DIRECTION  = (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN);
     // Initilization of ultrasonic sensors    
@@ -171,7 +171,7 @@ void side_sensor_task(void *pvParameters) {
     int right_array[ARRAY_SIZE] = {0};
     int array_count = 0;
     float prev_proportional_turn = 0;
-
+    float integral = 0.0f;
     // Read from sensors until the array has only 1 empty slot before the main loop
     for(; array_count < ARRAY_SIZE - 1; array_count++){
 
@@ -213,7 +213,7 @@ void side_sensor_task(void *pvParameters) {
         printf("\nLeft Distance = %dcm\tRight Distance = %dcm", left_distance, right_distance);
         
         // Check the front distance so that if the front distance is small enough the car can still turn
-        int proportional_turn;
+        float proportional_turn = 0;
         xQueuePeek(xFrontQueue, &front_sensor_peeked, portMAX_DELAY);
         // Check if the car is going forward or backward
         if(front_sensor_peeked <= MIN_FRONT_DISTANCE) motor_direction = MOTOR_BACKWARD_DIRECTION;
@@ -230,9 +230,7 @@ void side_sensor_task(void *pvParameters) {
         else if (left_distance_median <= MAX_SIDE_DISTANCE_TO_TURN || right_distance_median <= MAX_SIDE_DISTANCE_TO_TURN) {
             if(left_distance_median >= MAX_SIDE_DISTANCE_TO_TURN)  left_distance_median = MAX_SIDE_DISTANCE_TO_TURN;
             if(right_distance_median >= MAX_SIDE_DISTANCE_TO_TURN) right_distance_median = MAX_SIDE_DISTANCE_TO_TURN;
-            proportional_turn = (left_distance_median - right_distance_median);
-            if(proportional_turn >= FULL_RIGHT_DIRECTION) proportional_turn = FULL_RIGHT_DIRECTION;
-            if(proportional_turn <= FULL_LEFT_DIRECTION)  proportional_turn = FULL_LEFT_DIRECTION;
+            proportional_turn = (float)(left_distance_median - right_distance_median);
         }
         else {
             proportional_turn = 0;
@@ -240,15 +238,20 @@ void side_sensor_task(void *pvParameters) {
         // get the current time
         absolute_time_t endTime = get_absolute_time(); 
         // convert the time difference between readings from microseconds to seconds
-        float delta_T = (float)(absolute_time_diff_us(startTime, endTime) / 1000000); 
-        float derivative = (proportional_turn - prev_proportional_turn) / delta_T;
+        float delta_T = (float)(absolute_time_diff_us(startTime, endTime)); 
+        float derivative = 1000000*(proportional_turn - prev_proportional_turn) / delta_T;
         // The integral term fine tunes the turning angle only during small turn angles
-        int integral = 0;
-        if((FULL_RIGHT_DIRECTION / 4 <= proportional_turn) && (proportional_turn <= FULL_RIGHT_DIRECTION / 4)){
-            integral += proportional_turn;
-        }
+
+        // if(((FULL_RIGHT_DIRECTION / 2) <= proportional_turn) && (proportional_turn <= (FULL_LEFT_DIRECTION / 2))){
+        integral += proportional_turn;
+        if(integral >= 150 / INTEGRAL_GAIN) integral = 150 / INTEGRAL_GAIN;
+        else if (integral <= -150 / INTEGRAL_GAIN) integral = -150 / INTEGRAL_GAIN; 
+        // }
         // Get the PID value by adding proportional and derivative terms
-        float value_to_turn = (float)(proportional_turn * PROPORTIONAL_GAIN) + (derivative * DERIVATIVE_GAIN) + (integral * INTEGRAL_GAIN);
+        float proportional_term = (proportional_turn * PROPORTIONAL_GAIN);
+        float derivative_term   = (derivative * DERIVATIVE_GAIN);
+        float integral_term     = (integral * INTEGRAL_GAIN);
+        float value_to_turn = proportional_term + derivative_term + integral_term;
 
         startTime = endTime;
         prev_proportional_turn = proportional_turn;
@@ -256,7 +259,7 @@ void side_sensor_task(void *pvParameters) {
         // Reverse the turning direction if the motor is going backwards
         if(motor_direction == MOTOR_BACKWARD_DIRECTION) value_to_turn *= -1;
 
-        printf("\tTurn_Value = %f, Proportional = %f, Derivative = %f, Integral = %f",value_to_turn, proportional_turn*PROPORTIONAL_GAIN, derivative*DERIVATIVE_GAIN, integral*INTEGRAL_GAIN);
+        printf("\tTurn_Value = %f, Proportional = %f, Derivative = %f, Integral = %f",value_to_turn, proportional_term, derivative_term, integral_term);
         // Send the data to the queue so that the servo task can access it
         xQueueSend(xSideQueue, &value_to_turn, 0U);
         // Delay certain amount of ticks
@@ -312,7 +315,7 @@ void motor_task_exp(void *pvParameters){
                 if(current_micros > MAX_MOTOR_FORWARD_MICROS) current_micros = MAX_MOTOR_FORWARD_MICROS;
             }
         }
-        printf("\nReceived Motor Input = %f\n", current_micros);
+        /*printf("\nReceived Motor Input = %f\n", current_micros);*/
         setMillis(motor_pin, current_micros);
         // Store previous speed for future use
         vTaskDelay((TickType_t)FRONT_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
@@ -331,7 +334,7 @@ void servo_task(void *pvParameters) {
     while (true) {   
         //Waits until the queue receives data and writes the data to value_to_turn variable
         xQueueReceive(xSideQueue, &value_to_turn, portMAX_DELAY);
-        printf("\nReceived Servo Input = %f", value_to_turn);
+        /*printf("\nReceived Servo Input = %f", value_to_turn);*/
 
         //Turn the servo according to the data sent from the sensor task
         current_micros = MIDDLE_MICROS + value_to_turn;
