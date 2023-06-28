@@ -25,7 +25,7 @@ uint64_t getPulse(uint trigPin, uint echoPin)
     uint64_t width = 0;
 
     while (gpio_get(echoPin) == 0) {
-        if(width++ > 5000) return 0;
+        if(width++ > 10000) return 0;
         sleep_us(1);
     }
     width = 0;
@@ -45,6 +45,12 @@ uint64_t getCm(uint trigPin, uint echoPin)
 {
     uint64_t pulseLength = getPulse(trigPin, echoPin);
     return pulseLength / 29 / 2;
+}
+
+float getCmFloat(uint trigPin, uint echoPin)
+{
+    uint64_t pulseLength = getPulse(trigPin, echoPin);
+    return (float)pulseLength * 0.017f;
 }
 
 uint64_t getInch(uint trigPin, uint echoPin)
