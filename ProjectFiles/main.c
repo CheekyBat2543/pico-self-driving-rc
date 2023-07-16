@@ -76,14 +76,24 @@
 #define MOTOR_STATE_CHANGE_INTERVAL         800  // Milliseconds
 #define FRONT_SENSOR_READ_PERIOD            50   // Milliseconds
 #define SIDE_SENSOR_READ_PERIOD             50   // Milliseconds
+#define SERVO_UPDATE_PERIOD                 10   // Milliseconds
+#define MOTOR_UPDATE_PERIOD                 10   // Milliseconds
 #define LED_BLINK_PERIOD                    1000 // Milliseconds               
 /*------------------------------------------------------------*/
 
 
 // FreeRTOS queue to send data from side sensors to servo
-static QueueHandle_t xSideQueue      = NULL;
+static QueueHandle_t xLeftQueue      = NULL;
+static QueueHandle_t xRightQueue     = NULL;
 static QueueHandle_t xFrontQueue     = NULL;
 
+// FreeRTOS task handles
+TaskHandle_t xLed_Task_Handle = NULL;
+TaskHandle_t xFront_Sensor_Handle = NULL;
+TaskHandle_t xLeft_Sensor_Handle = NULL;
+TaskHandle_t xRight_Sensor_Handle = NULL;
+TaskHandle_t xServo_Task_Handle = NULL;
+TaskHandle_t xMotor_Task_Handle = NULL;
 
 // Function definitions
 int getMedian(const int* arr, int size);
@@ -107,134 +117,160 @@ void led_task() {
     }
 }
 
-//Front servo task that measures the distance in front and sends it to the DC motor
 void front_sensor_task(void *pvParameters) {
     const uint front_trig_pin = FRONT_TRIG_PIN;
     const uint front_echo_pin = FRONT_ECHO_PIN;
 
-    int middle_prev = 0;
-    int distance_array[ARRAY_SIZE] = {0};
-    int distance_count = 0;
+    int front_distance_array[ARRAY_SIZE] = {0};
+    int front_distance_count = 0;
 
     setupUltrasonicPins(front_trig_pin, front_echo_pin);
 
-    for(; distance_count < ARRAY_SIZE -1; distance_count++){
-        int middle_distance = getCm(front_trig_pin, front_echo_pin);
-        if(middle_distance > MAX_FRONT_DISTANCE) middle_distance = MAX_FRONT_DISTANCE;
-        distance_array[distance_count] = middle_distance;
+    for(; front_distance_count < ARRAY_SIZE -1; front_distance_count++){
+        int front_distance = getCm(front_trig_pin, front_echo_pin);
+        if(front_distance > MAX_FRONT_DISTANCE) front_distance = MAX_FRONT_DISTANCE;
+        front_distance_array[front_distance_count] = front_distance;
     }
 
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount();
     while(true) {
-        int middle_distance = getCm(front_trig_pin, front_echo_pin);
-        if(middle_distance > MAX_FRONT_DISTANCE) middle_distance = MAX_FRONT_DISTANCE;
-        distance_count++;
-        if(distance_count > ARRAY_SIZE - 1) distance_count = 0;
+        int front_distance = getCm(front_trig_pin, front_echo_pin);
+        if(front_distance > MAX_FRONT_DISTANCE) front_distance = MAX_FRONT_DISTANCE;
+        front_distance_count++;
+        if(front_distance_count > ARRAY_SIZE - 1) front_distance_count = 0;
 
-        distance_array[distance_count] = middle_distance;
+        front_distance_array[front_distance_count] = front_distance;
 
         #ifdef SIDE_SENSOR_DEMO
         int distance_to_send = 100;
         #else 
-        int distance_to_send = getMedian(distance_array, ARRAY_SIZE);
+        int distance_to_send = getMedian(front_distance_array, ARRAY_SIZE);
         #endif
         
         /*printf("\nMiddle Distance = %d", distance_to_send);*/
         xQueueOverwrite(xFrontQueue, &distance_to_send);
 
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)FRONT_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
-        // middle_prev = middle_distance;
     }
 }
 
-// Sensor task that reads from left and right sensors, calculates the amount of turn the servo must make and sends it through a queue.
-void side_sensor_task(void *pvParameters) {
-    // GPIO Pins of the side sensors
+void left_sensor_task(void *pvParameters){
     const uint left_trig_pin  = LEFT_TRIG_PIN;
     const uint left_echo_pin  = LEFT_ECHO_PIN;
-    const uint right_trig_pin = RIGHT_TRIG_PIN;
-    const uint right_echo_pin = RIGHT_ECHO_PIN;
-    // Calculate constant terms
+
+    int left_distance_count = 0;
+    int left_distance_array[ARRAY_SIZE] = {0};
+    setupUltrasonicPins(left_trig_pin, left_echo_pin);
+
+    for(; left_distance_count < ARRAY_SIZE - 1; left_distance_count++) {
+        int left_distance = getCm(left_trig_pin, left_echo_pin);
+        if(left_distance > MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
+        left_distance_array[left_distance_count] = left_distance;
+    }
+    TickType_t xNextWaitTime;
+    xNextWaitTime = xTaskGetTickCount(); 
+    while(true) {
+        int left_distance = getCm(left_trig_pin, left_echo_pin);
+        if(left_distance > MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
+        left_distance_count++;
+        if(left_distance_count > ARRAY_SIZE-1) left_distance_count = 0;
+
+        left_distance_array[left_distance_count] = left_distance;
+
+        #ifdef FRONT_SENSOR_DEMO
+        int distance_to_send = MAX_SIDE_DISTANCE_TO_TURN;
+        #else
+        int distance_to_send = getMedian(left_distance_array, ARRAY_SIZE);
+        #endif
+        xQueueOverwrite(xRightQueue, &distance_to_send);
+        
+        xTaskDelayUntil(&xNextWaitTime, (TickType_t)SIDE_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
+    }
+}
+
+void right_sensor_task(void *pvParameters){
+    const uint right_trig_pin  = RIGHT_TRIG_PIN;
+    const uint right_echo_pin  = RIGHT_ECHO_PIN;
+
+    int right_distance_count = 0;
+    int right_distance_array[ARRAY_SIZE] = {0};
+    setupUltrasonicPins(right_trig_pin, right_echo_pin);
+
+    for(; right_distance_count < ARRAY_SIZE - 1; right_distance_count++) {
+        int right_distance = getCm(right_trig_pin, right_echo_pin);
+        if(right_distance > MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
+        right_distance_array[right_distance_count] = right_distance;
+    }
+    TickType_t xNextWaitTime;
+    xNextWaitTime = xTaskGetTickCount(); 
+    while(true) {
+        int right_distance = getCm(right_trig_pin, right_echo_pin);
+        if(right_distance > MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
+        right_distance_count++;
+        if(right_distance_count > ARRAY_SIZE-1) right_distance_count = 0;
+
+        right_distance_array[right_distance_count] = right_distance;
+
+        #ifdef FRONT_SENSOR_DEMO
+        int distance_to_send = MAX_SIDE_DISTANCE_TO_TURN;
+        #else
+        int distance_to_send = getMedian(right_distance_array, ARRAY_SIZE);
+        #endif
+        xQueueOverwrite(xRightQueue, &distance_to_send);
+        
+        xTaskDelayUntil(&xNextWaitTime, (TickType_t)SIDE_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
+    }
+}
+
+void servo_task(void *pvParameters) {
+    const uint servo_pin = SERVO_PIN;
+    //Servo Conversion Rate      ==>     1000us = 0 Degrees,   1500us = 60 Degrees,   2000us = 120 Degrees.
+    const float MIDDLE_MICROS = (MAX_SERVO_MICROS + MIN_SERVO_MICROS) / 2;
+    float current_micros = MIDDLE_MICROS;
     const float PROPORTIONAL_GAIN = (float)(MAX_SERVO_MICROS - MIN_SERVO_MICROS - 300) / (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN) / 2;
     const float DERIVATIVE_GAIN = -0.1f;
     const float INTEGRAL_GAIN = 0.15f;
     const float FULL_RIGHT_DIRECTION = -1*(MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN);
-    const float FULL_LEFT_DIRECTION  = (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN);
-    // Initilization of ultrasonic sensors    
-    setupUltrasonicPins(left_trig_pin, left_echo_pin);
-    setupUltrasonicPins(right_trig_pin, right_echo_pin);
+    const float FULL_LEFT_DIRECTION  = (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN);    
     
-    int front_sensor_peeked = 0;
-    int motor_direction = MOTOR_FORWARD_DIRECTION;
-    int left_array[ARRAY_SIZE] = {0};
-    int right_array[ARRAY_SIZE] = {0};
-    int array_count = 0;
+    float value_to_turn = 0;
+    int front_sensor_distance = 0;
+    int right_sensor_distance = 0;
+    int left_sensor_distance = 0;
     float prev_proportional_turn = 0;
-    float integral = 0.0f;
-    // Read from sensors until the array has only 1 empty slot before the main loop
-    for(; array_count < ARRAY_SIZE - 1; array_count++){
+    float integral = 0.0f;    
 
-        int left_distance  = getCm(left_trig_pin, left_echo_pin);
-        if(left_distance > MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
-        left_array[array_count] = left_distance;
+    //Initiliaze servo
+    setServo(servo_pin, current_micros);
 
-        int right_distance = getCm(right_trig_pin, right_echo_pin);
-        if(right_distance > MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
-        right_array[array_count] = right_distance;
-    }
-
-    // Gets current time in terms of freeRTOS ticks
     TickType_t xNextWaitTime;
     absolute_time_t startTime = get_absolute_time();
     xNextWaitTime = xTaskGetTickCount(); 
-    while(true) {
-        // Read from sensors
-        int left_distance  = getCm(left_trig_pin, left_echo_pin);
-        if (left_distance >= MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
-        int right_distance = getCm(right_trig_pin, right_echo_pin);
-        if (right_distance >= MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
 
-        // Add the current distance measurement to the array by overwriting the most outdated measurement
-        array_count++;
-        if(array_count > ARRAY_SIZE - 1) array_count = 0;
-        left_array[array_count]  = left_distance;
-        right_array[array_count] = right_distance;
+    while (true) {   
+        //Waits until the queue receives data and writes the data to value_to_turn variable
+        xQueuePeek(xFrontQueue, &front_sensor_distance, portMAX_DELAY);
+        xQueuePeek(xRightQueue, &right_sensor_distance, portMAX_DELAY);
+        xQueuePeek(xLeftQueue, &left_sensor_distance, portMAX_DELAY);
 
-        // Calculate the median measurements of the arrays
-        #ifdef SINGLE_SENSOR_DEMO
-        int left_distance_median  = 100;
-        int right_distance_median = 100;
-        #else 
-        int left_distance_median  = getMedian(left_array, ARRAY_SIZE);
-        int right_distance_median = getMedian(right_array, ARRAY_SIZE);
-        #endif
-
-        printf("\nLeft Distance = %dcm\tRight Distance = %dcm", left_distance, right_distance);
-        
-        // Check the front distance so that if the front distance is small enough the car can still turn
         float proportional_turn = 0;
-        xQueuePeek(xFrontQueue, &front_sensor_peeked, portMAX_DELAY);
-        // Check if the car is going forward or backward
-        if(front_sensor_peeked <= MIN_FRONT_DISTANCE) motor_direction = MOTOR_BACKWARD_DIRECTION;
-        else                                          motor_direction = MOTOR_FORWARD_DIRECTION;
-
-        // Calculate the proportional term
-        if(left_distance_median <= MIN_SIDE_DISTANCE_TO_TURN || right_distance_median <= MIN_SIDE_DISTANCE_TO_TURN || front_sensor_peeked <= MAX_FRONT_DISTANCE_TO_TURN) {
-            if(left_distance_median < right_distance_median){
+        if(left_sensor_distance <= MIN_SIDE_DISTANCE_TO_TURN || right_sensor_distance <= MIN_SIDE_DISTANCE_TO_TURN || front_sensor_distance <= MAX_FRONT_DISTANCE_TO_TURN) {
+            if(left_sensor_distance < right_sensor_distance){
                 proportional_turn = FULL_RIGHT_DIRECTION;
             } else {
                 proportional_turn = FULL_LEFT_DIRECTION;
             }
         }
-        else if (left_distance_median <= MAX_SIDE_DISTANCE_TO_TURN || right_distance_median <= MAX_SIDE_DISTANCE_TO_TURN) {
-            if(left_distance_median >= MAX_SIDE_DISTANCE_TO_TURN)  left_distance_median = MAX_SIDE_DISTANCE_TO_TURN;
-            if(right_distance_median >= MAX_SIDE_DISTANCE_TO_TURN) right_distance_median = MAX_SIDE_DISTANCE_TO_TURN;
-            proportional_turn = (float)(left_distance_median - right_distance_median);
+        else if (left_sensor_distance <= MAX_SIDE_DISTANCE_TO_TURN || right_sensor_distance <= MAX_SIDE_DISTANCE_TO_TURN) {
+            if(left_sensor_distance >= MAX_SIDE_DISTANCE_TO_TURN)  left_sensor_distance = MAX_SIDE_DISTANCE_TO_TURN;
+            if(right_sensor_distance >= MAX_SIDE_DISTANCE_TO_TURN) right_sensor_distance = MAX_SIDE_DISTANCE_TO_TURN;
+            proportional_turn = (float)(left_sensor_distance - right_sensor_distance);
         }
         else {
             proportional_turn = 0;
         }
+
         // get the current time
         absolute_time_t endTime = get_absolute_time(); 
 
@@ -258,18 +294,19 @@ void side_sensor_task(void *pvParameters) {
         prev_proportional_turn = proportional_turn;
 
         // Reverse the turning direction if the motor is going backwards
-        if(motor_direction == MOTOR_BACKWARD_DIRECTION) value_to_turn *= -1;
+        if(front_sensor_distance <= MIN_FRONT_DISTANCE) value_to_turn *= -1;
 
-        printf("\tTurn_Value = %f, Proportional = %f, Derivative = %f, Integral = %f",value_to_turn, proportional_term, derivative_term, integral_term);
-        // Send the data to the queue so that the servo task can access it
-        xQueueSend(xSideQueue, &value_to_turn, 0U);
-        // Delay certain amount of ticks
-        xTaskDelayUntil(&xNextWaitTime, (TickType_t)SIDE_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
+        current_micros = MIDDLE_MICROS + value_to_turn;
+        if(current_micros <= MIN_SERVO_MICROS) current_micros = MIN_SERVO_MICROS;
+        if(current_micros >= MAX_SERVO_MICROS) current_micros = MAX_SERVO_MICROS;
+
+        setMillis(servo_pin, roundToIntervalFloat((current_micros), SERVO_ROUND_INTERVAL));
+
+        xTaskDelayUntil(&xNextWaitTime, (TickType_t)SERVO_UPDATE_PERIOD/portTICK_PERIOD_MS);
     }
 }
 
-// Motor task that waits for data from the front sensor that controls the robot's speed
-void motor_task_exp(void *pvParameters){
+void motor_task(void *pvParameters) {
     const uint motor_pin = MOTOR_ESC_PIN;
     // Motor Conversion Rate     ==>     1000 = Reverse Max,     1500 = Stop,    2000 = Forward Max.   
     const float CONVERSION_RATE = (float)(MAX_MOTOR_FORWARD_MICROS - MIN_MOTOR_FORWARD_MICROS) / (MAX_FRONT_DISTANCE);
@@ -280,6 +317,7 @@ void motor_task_exp(void *pvParameters){
     // Initiliaze motor as servo so that we can control it through ESC
     setServo(motor_pin, current_micros);
     sleep_ms(2000);
+    TickType_t xNextWaitTime = xTaskGetTickCount();
     while(true) {
         // Wait for the front sensor to send data
         xQueuePeek(xFrontQueue, &micros_received, portMAX_DELAY);
@@ -319,30 +357,7 @@ void motor_task_exp(void *pvParameters){
         /*printf("\nReceived Motor Input = %f\n", current_micros);*/
         setMillis(motor_pin, current_micros);
         // Store previous speed for future use
-        vTaskDelay((TickType_t)FRONT_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
-    }
-}
-
-void servo_task(void *pvParameters) {
-    const uint servo_pin = SERVO_PIN;
-    //Servo Conversion Rate      ==>     1000us = 0 Degrees,   1500us = 60 Degrees,   2000us = 120 Degrees.
-    const float MIDDLE_MICROS = (MAX_SERVO_MICROS + MIN_SERVO_MICROS) / 2;
-    float current_micros = MIDDLE_MICROS;
-    float value_to_turn = 0;
-    //Initiliaze servo
-    setServo(servo_pin, current_micros);
-
-    while (true) {   
-        //Waits until the queue receives data and writes the data to value_to_turn variable
-        xQueueReceive(xSideQueue, &value_to_turn, portMAX_DELAY);
-        /*printf("\nReceived Servo Input = %f", value_to_turn);*/
-
-        //Turn the servo according to the data sent from the sensor task
-        current_micros = MIDDLE_MICROS + value_to_turn;
-        if(current_micros <= MIN_SERVO_MICROS) current_micros = MIN_SERVO_MICROS;
-        if(current_micros >= MAX_SERVO_MICROS) current_micros = MAX_SERVO_MICROS;
-
-        setMillis(servo_pin, roundToIntervalFloat((current_micros), SERVO_ROUND_INTERVAL));
+        xTaskDelayUntil(&xNextWaitTime, (TickType_t)MOTOR_UPDATE_PERIOD / portTICK_PERIOD_MS);
     }
 }
 
@@ -357,8 +372,9 @@ int main()
     sleep_ms(1500);
 
     //Create queue for the side sensors
-    xSideQueue  = xQueueCreate(1, sizeof(float));
     xFrontQueue = xQueueCreate(1, sizeof(int));
+    xRightQueue = xQueueCreate(1, sizeof(int));
+    xLeftQueue  = xQueueCreate(1, sizeof(int));
 
     //Create freeRTOS tasks
     xTaskCreate(led_task, 
@@ -366,36 +382,42 @@ int main()
                 configMINIMAL_STACK_SIZE, 
                 NULL, 
                 1, 
-                NULL);
+                &xLed_Task_Handle);
 
     xTaskCreate(front_sensor_task, 
                 "Front_Servor_Task", 
-                2048, 
+                512, 
                 NULL, 
                 5, 
-                NULL);
+                &xFront_Sensor_Handle);
 
-    xTaskCreate(motor_task_exp, 
+    xTaskCreate(right_sensor_task, 
+                "Right_Servor_Task", 
+                512, 
+                NULL, 
+                4, 
+                &xRight_Sensor_Handle);
+
+    xTaskCreate(left_sensor_task, 
+                "Left_Servor_Task", 
+                512, 
+                NULL, 
+                4, 
+                &xLeft_Sensor_Handle);                                
+
+    xTaskCreate(motor_task, 
                 "Motor_Task", 
-                2048, 
+                1024, 
                 NULL, 
                 3, 
-                NULL);
+                &xMotor_Task_Handle);
 
     xTaskCreate(servo_task, 
                 "Servo_Task", 
-                512, 
+                2048, 
                 NULL, 
                 3, 
-                NULL);  
-
-    xTaskCreate(side_sensor_task, 
-                "Side_Sensor_Task", 
-                4096, 
-                NULL, 
-                4, 
-                NULL);
-
+                &xServo_Task_Handle);  
 
     //start the main loop
     vTaskStartScheduler();
