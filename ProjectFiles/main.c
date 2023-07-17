@@ -11,7 +11,7 @@
 #include "ultrasonic.h"
 
 // #define SINGLE_SENSOR_DEMO 1
-// #define SIDE_SENSOR_DEMO 1
+ #define SIDE_SENSOR_DEMO 1
 
 // Trigonometric Macros
 /*------------------------------------------------------------*/
@@ -148,7 +148,7 @@ void front_sensor_task(void *pvParameters) {
         int distance_to_send = getMedian(front_distance_array, ARRAY_SIZE);
         #endif
         
-        /*printf("\nMiddle Distance = %d", distance_to_send);*/
+        /*printf("\nFront Distance = %d\n", distance_to_send);*/
         xQueueOverwrite(xFrontQueue, &distance_to_send);
 
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)FRONT_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
@@ -183,7 +183,9 @@ void left_sensor_task(void *pvParameters){
         #else
         int distance_to_send = getMedian(left_distance_array, ARRAY_SIZE);
         #endif
-        xQueueOverwrite(xRightQueue, &distance_to_send);
+
+        /*printf("left Distance = %d\n", distance_to_send);*/
+        xQueueOverwrite(xLeftQueue, &distance_to_send);
         
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)SIDE_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
     }
@@ -217,6 +219,8 @@ void right_sensor_task(void *pvParameters){
         #else
         int distance_to_send = getMedian(right_distance_array, ARRAY_SIZE);
         #endif
+
+        /*printf("Right Distance = %d\n", distance_to_send);*/
         xQueueOverwrite(xRightQueue, &distance_to_send);
         
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)SIDE_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
@@ -229,7 +233,7 @@ void servo_task(void *pvParameters) {
     const float MIDDLE_MICROS = (MAX_SERVO_MICROS + MIN_SERVO_MICROS) / 2;
     float current_micros = MIDDLE_MICROS;
     const float PROPORTIONAL_GAIN = (float)(MAX_SERVO_MICROS - MIN_SERVO_MICROS - 300) / (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN) / 2;
-    const float DERIVATIVE_GAIN = -0.1f;
+    const float DERIVATIVE_GAIN = 0.02f;
     const float INTEGRAL_GAIN = 0.15f;
     const float FULL_RIGHT_DIRECTION = -1*(MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN);
     const float FULL_LEFT_DIRECTION  = (MAX_SIDE_DISTANCE_TO_TURN - MIN_SIDE_DISTANCE_TO_TURN);    
@@ -253,6 +257,7 @@ void servo_task(void *pvParameters) {
         xQueuePeek(xFrontQueue, &front_sensor_distance, portMAX_DELAY);
         xQueuePeek(xRightQueue, &right_sensor_distance, portMAX_DELAY);
         xQueuePeek(xLeftQueue, &left_sensor_distance, portMAX_DELAY);
+        printf("Left Distance = %d, Front Distance = %d, R, Right Distance = %d\n", left_sensor_distance, front_sensor_distance, right_sensor_distance);
 
         float proportional_turn = 0;
         if(left_sensor_distance <= MIN_SIDE_DISTANCE_TO_TURN || right_sensor_distance <= MIN_SIDE_DISTANCE_TO_TURN || front_sensor_distance <= MAX_FRONT_DISTANCE_TO_TURN) {
@@ -292,14 +297,16 @@ void servo_task(void *pvParameters) {
         // Save the current time and current proportional turn to calculate derivative in the next loop
         startTime = endTime;
         prev_proportional_turn = proportional_turn;
-
+        
         // Reverse the turning direction if the motor is going backwards
         if(front_sensor_distance <= MIN_FRONT_DISTANCE) value_to_turn *= -1;
-
+        printf("Proportional Term = %f, Integral Term = %f, Derivative Term = %f\n", proportional_term, integral_term, derivative_term);
+        printf("\tValue To Turn = %f\n", value_to_turn);
         current_micros = MIDDLE_MICROS + value_to_turn;
         if(current_micros <= MIN_SERVO_MICROS) current_micros = MIN_SERVO_MICROS;
         if(current_micros >= MAX_SERVO_MICROS) current_micros = MAX_SERVO_MICROS;
 
+        printf("\tServo Current Micros = %f\n\n", current_micros);
         setMillis(servo_pin, roundToIntervalFloat((current_micros), SERVO_ROUND_INTERVAL));
 
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)SERVO_UPDATE_PERIOD/portTICK_PERIOD_MS);
@@ -375,50 +382,84 @@ int main()
     xFrontQueue = xQueueCreate(1, sizeof(int));
     xRightQueue = xQueueCreate(1, sizeof(int));
     xLeftQueue  = xQueueCreate(1, sizeof(int));
+    
+    // Necessary to check if tasks are created
+    BaseType_t xLed_Task_Returned;
+    BaseType_t xFront_Sensor_Returned;
+    BaseType_t xRigth_Sensor_Returned;
+    BaseType_t xLeft_Sensor_Returned;
+    BaseType_t xServo_Task_Returned;
+    BaseType_t xMotor_Task_Returned;
 
     //Create freeRTOS tasks
-    xTaskCreate(led_task, 
+    xLed_Task_Returned = xTaskCreate(led_task, 
                 "LED_Task", 
                 configMINIMAL_STACK_SIZE, 
                 NULL, 
                 1, 
                 &xLed_Task_Handle);
+    if(xLed_Task_Returned != pdPASS) {
+        printf("Led Task could not be created\n");
+        return 0;
+    }
 
-    xTaskCreate(front_sensor_task, 
+    xFront_Sensor_Returned = xTaskCreate(front_sensor_task, 
                 "Front_Servor_Task", 
                 512, 
                 NULL, 
                 5, 
                 &xFront_Sensor_Handle);
-
-    xTaskCreate(right_sensor_task, 
+    if(xLed_Task_Returned != pdPASS) {
+        printf("Led Task could not be created\n");
+        return 0;
+    }
+  
+    xRigth_Sensor_Returned = xTaskCreate(right_sensor_task, 
                 "Right_Servor_Task", 
                 512, 
                 NULL, 
                 4, 
                 &xRight_Sensor_Handle);
+    if(xRigth_Sensor_Returned != pdPASS) {
+        printf("Right Sensor Task could not be created\n");
+        return 0;
+    }
 
-    xTaskCreate(left_sensor_task, 
+    xLeft_Sensor_Returned = xTaskCreate(left_sensor_task, 
                 "Left_Servor_Task", 
                 512, 
                 NULL, 
                 4, 
                 &xLeft_Sensor_Handle);                                
+    if(xLeft_Sensor_Returned != pdPASS) {
+        printf("Left Sensor Task could not be created\n");
+        return 0;
+    }
 
-    xTaskCreate(motor_task, 
+    xMotor_Task_Returned = xTaskCreate(motor_task, 
                 "Motor_Task", 
                 1024, 
                 NULL, 
                 3, 
                 &xMotor_Task_Handle);
+    if(xMotor_Task_Returned != pdPASS) {
+        printf("Motor Task could not be created\n");
+        return 0;
+    }    
 
-    xTaskCreate(servo_task, 
+    xServo_Task_Returned = xTaskCreate(servo_task, 
                 "Servo_Task", 
                 2048, 
                 NULL, 
                 3, 
                 &xServo_Task_Handle);  
+    if(xServo_Task_Returned != pdPASS) {
+        printf("Servo Task could not be created\n");
+        return 0;
+    }
+    printf("All Tasks are successfuly created\n\n");
 
+    
     //start the main loop
     vTaskStartScheduler();
 
