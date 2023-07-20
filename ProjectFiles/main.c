@@ -12,7 +12,7 @@
 #include "ssd1306.h"
 #include "image.h"
 
-// #define SINGLE_SENSOR_DEMO 1
+ #define FRONT_SENSOR_DEMO 1
  #define SIDE_SENSOR_DEMO 1
 
 // Trigonometric Macros
@@ -91,6 +91,8 @@
 static QueueHandle_t xLeftQueue      = NULL;
 static QueueHandle_t xRightQueue     = NULL;
 static QueueHandle_t xFrontQueue     = NULL;
+static QueueHandle_t xServoQueue     = NULL;
+static QueueHandle_t xMotorQueue     = NULL;
 
 // FreeRTOS task handles
 TaskHandle_t xLed_Task_Handle = NULL;
@@ -102,7 +104,7 @@ TaskHandle_t xServo_Task_Handle = NULL;
 TaskHandle_t xMotor_Task_Handle = NULL;
 
 // Function definitions
-int getMedian(const int* arr, int size);
+int getMedian(const int* arr, int size);;
 void changeMotorDirection(uint motorPin, bool * direction, int change_interval);
 int roundToIntervalFloat(const float number, int round_interval);
 int roundToIntervalInt(const int number, int round_interval);
@@ -127,6 +129,20 @@ void oled_screen_task(void *pvParameters) {
     const uint i2c_sda_pin = OLED_SDA_PIN;
     const uint i2c_scl_pin = OLED_SCL_PIN;
 
+    int front_sensor_distance = 0;
+    int left_sensor_distance = 0;
+    int right_sensor_distance = 0;
+    float servo_micros = 0.0f;
+    float motor_micros = 0.0f;
+
+    // Left: 400    Front 400   Right 400
+    char front_sensor_text[13];
+    char left_sensor_text[13];
+    char right_sensor_text[13];
+    char servo_text[15];
+    char motor_text[15];
+
+    
     // Setup of I2C
     i2c_init(i2c1, 400000);
     gpio_set_function(i2c_sda_pin, GPIO_FUNC_I2C);
@@ -138,8 +154,35 @@ void oled_screen_task(void *pvParameters) {
     disp.external_vcc = false;
     ssd1306_init(&disp, 128, 64, 0x3C, i2c1);
     ssd1306_clear(&disp);
-    ssd1306_bmp_show_image(&disp, image_data, image_size);
-    ssd1306_show(&disp);
+    /*ssd1306_bmp_show_image(&disp, image_data, image_size);
+    ssd1306_show(&disp);*/
+
+    while(true) {
+        xQueuePeek(xFrontQueue, &front_sensor_distance, portMAX_DELAY);
+        xQueuePeek(xRightQueue, &right_sensor_distance, portMAX_DELAY);
+        xQueuePeek(xLeftQueue, &left_sensor_distance, portMAX_DELAY);
+        xQueuePeek(xMotorQueue, &motor_micros, portMAX_DELAY);
+        xQueuePeek(xServoQueue, &servo_micros, portMAX_DELAY);
+
+        snprintf(front_sensor_text, 12, "Front: %d\0", front_sensor_distance);
+        ssd1306_draw_string(&disp, 38, 10, 1, front_sensor_text);
+
+        snprintf(left_sensor_text, 12, "Left: %d\0", left_sensor_distance);
+        ssd1306_draw_string(&disp, 10, 24, 1, left_sensor_text);
+
+        snprintf(right_sensor_text, 12, "Right: %d\0", right_sensor_distance);
+        ssd1306_draw_string(&disp, 70, 24, 1, right_sensor_text);  
+
+        snprintf(motor_text, 14, "Motor: %.1f\0", motor_micros);
+        ssd1306_draw_string(&disp, 30, 38, 1, motor_text);
+
+        snprintf(servo_text, 14, "Servo: %.1f\0", servo_micros);
+        ssd1306_draw_string(&disp, 30, 52, 1, servo_text);
+
+        ssd1306_show(&disp);
+        vTaskDelay(5);
+        ssd1306_clear(&disp);
+    }
 
 }
 
@@ -334,7 +377,8 @@ void servo_task(void *pvParameters) {
 
         printf("\tServo Current Micros = %f\n\n", current_micros);
         setMillis(servo_pin, roundToIntervalFloat((current_micros), SERVO_ROUND_INTERVAL));
-
+        
+        xQueueOverwrite(xServoQueue, &current_micros);
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)SERVO_UPDATE_PERIOD/portTICK_PERIOD_MS);
     }
 }
@@ -389,6 +433,7 @@ void motor_task(void *pvParameters) {
         }
         /*printf("\nReceived Motor Input = %f\n", current_micros);*/
         setMillis(motor_pin, current_micros);
+        xQueueOverwrite(xMotorQueue, &current_micros);
         // Store previous speed for future use
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)MOTOR_UPDATE_PERIOD / portTICK_PERIOD_MS);
     }
@@ -408,7 +453,8 @@ int main()
     xFrontQueue = xQueueCreate(1, sizeof(int));
     xRightQueue = xQueueCreate(1, sizeof(int));
     xLeftQueue  = xQueueCreate(1, sizeof(int));
-    
+    xServoQueue = xQueueCreate(1, sizeof(float));
+    xMotorQueue = xQueueCreate(1, sizeof(float));
     // Necessary to check if tasks are created
     BaseType_t xLed_Task_Returned;
     BaseType_t xOled_Screen_Task_Returned;
