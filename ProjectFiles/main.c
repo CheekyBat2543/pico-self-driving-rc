@@ -9,6 +9,8 @@
 #include "pico/float.h"
 #include "servo.h"
 #include "ultrasonic.h"
+#include "ssd1306.h"
+#include "image.h"
 
 // #define SINGLE_SENSOR_DEMO 1
  #define SIDE_SENSOR_DEMO 1
@@ -27,6 +29,8 @@
 // Pin Connections
 /*------------------------------------------------------------*/
 #define LED_PIN         25
+#define OLED_SDA_PIN    6
+#define OLED_SCL_PIN    7
 
 #define RIGHT_TRIG_PIN  16
 #define RIGHT_ECHO_PIN  17
@@ -37,6 +41,7 @@
 
 #define MOTOR_ESC_PIN   5
 #define SERVO_PIN       2
+
 /*------------------------------------------------------------*/
 
 
@@ -89,6 +94,7 @@ static QueueHandle_t xFrontQueue     = NULL;
 
 // FreeRTOS task handles
 TaskHandle_t xLed_Task_Handle = NULL;
+TaskHandle_t xOled_Screen_Task_Handle = NULL;
 TaskHandle_t xFront_Sensor_Handle = NULL;
 TaskHandle_t xLeft_Sensor_Handle = NULL;
 TaskHandle_t xRight_Sensor_Handle = NULL;
@@ -115,6 +121,26 @@ void led_task() {
         gpio_put(led_pin, 0);
         vTaskDelay((TickType_t)LED_BLINK_PERIOD / portTICK_PERIOD_MS);
     }
+}
+
+void oled_screen_task(void *pvParameters) {
+    const uint i2c_sda_pin = OLED_SDA_PIN;
+    const uint i2c_scl_pin = OLED_SCL_PIN;
+
+    // Setup of I2C
+    i2c_init(i2c1, 400000);
+    gpio_set_function(i2c_sda_pin, GPIO_FUNC_I2C);
+    gpio_set_function(i2c_scl_pin, GPIO_FUNC_I2C);
+    gpio_pull_up(i2c_sda_pin);
+    gpio_pull_up(i2c_scl_pin);
+
+    ssd1306_t disp;
+    disp.external_vcc = false;
+    ssd1306_init(&disp, 128, 64, 0x3C, i2c1);
+    ssd1306_clear(&disp);
+    ssd1306_bmp_show_image(&disp, image_data, image_size);
+    ssd1306_show(&disp);
+
 }
 
 void front_sensor_task(void *pvParameters) {
@@ -385,6 +411,7 @@ int main()
     
     // Necessary to check if tasks are created
     BaseType_t xLed_Task_Returned;
+    BaseType_t xOled_Screen_Task_Returned;
     BaseType_t xFront_Sensor_Returned;
     BaseType_t xRigth_Sensor_Returned;
     BaseType_t xLeft_Sensor_Returned;
@@ -401,6 +428,16 @@ int main()
     if(xLed_Task_Returned != pdPASS) {
         printf("Led Task could not be created\n");
         return 0;
+    }
+
+    xOled_Screen_Task_Returned = xTaskCreate(oled_screen_task,
+                "OLED_Screen_Task",
+                512,
+                NULL,
+                2,
+                &xOled_Screen_Task_Handle);
+    if(xOled_Screen_Task_Returned != pdPASS) {
+        printf("OLED Screen Task could not be created\n");
     }
 
     xFront_Sensor_Returned = xTaskCreate(front_sensor_task, 
