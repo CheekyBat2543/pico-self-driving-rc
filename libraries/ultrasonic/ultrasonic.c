@@ -47,6 +47,12 @@ uint64_t getCm(uint trigPin, uint echoPin)
     return pulseLength * 0.017f;
 }
 
+uint64_t getCm_with_temperature(uint trigPin, uint echoPin, float temperature)
+{
+    uint64_t pulseLength = getPulse(trigPin, echoPin);
+    return pulseLength * (331.0f + 0.6f * temperature) / 10000 / 2;
+}
+
 uint64_t getInch(uint trigPin, uint echoPin)
 {
     uint64_t pulseLength = getPulse(trigPin, echoPin);
