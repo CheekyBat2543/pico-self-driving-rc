@@ -11,6 +11,7 @@
 #include "ultrasonic.h"
 #include "ssd1306.h"
 #include "image.h"
+#include "dht.h"
 
  #define FRONT_SENSOR_DEMO 1
  #define SIDE_SENSOR_DEMO 1
@@ -31,6 +32,8 @@
 #define LED_PIN         25
 #define OLED_SDA_PIN    6
 #define OLED_SCL_PIN    7
+
+#define DHT_PIN         4
 
 #define RIGHT_TRIG_PIN  16
 #define RIGHT_ECHO_PIN  17
@@ -83,11 +86,15 @@
 #define SIDE_SENSOR_READ_PERIOD             50   // Milliseconds
 #define SERVO_UPDATE_PERIOD                 10   // Milliseconds
 #define MOTOR_UPDATE_PERIOD                 10   // Milliseconds
-#define LED_BLINK_PERIOD                    1000 // Milliseconds               
+#define LED_BLINK_PERIOD                    1000 // Milliseconds        
+#define OLED_REFRESH_PERIOD                 50   // Milliseconds
+#define OLED
+
 /*------------------------------------------------------------*/
 
 
 // FreeRTOS queue to send data from side sensors to servo
+static QueueHandle_t xDhtQueue       = NULL;
 static QueueHandle_t xLeftQueue      = NULL;
 static QueueHandle_t xRightQueue     = NULL;
 static QueueHandle_t xFrontQueue     = NULL;
@@ -97,11 +104,13 @@ static QueueHandle_t xMotorQueue     = NULL;
 // FreeRTOS task handles
 TaskHandle_t xLed_Task_Handle = NULL;
 TaskHandle_t xOled_Screen_Task_Handle = NULL;
+TaskHandle_t xDht_Sensor_Handle = NULL;
 TaskHandle_t xFront_Sensor_Handle = NULL;
 TaskHandle_t xLeft_Sensor_Handle = NULL;
 TaskHandle_t xRight_Sensor_Handle = NULL;
 TaskHandle_t xServo_Task_Handle = NULL;
 TaskHandle_t xMotor_Task_Handle = NULL;
+
 
 // Function definitions
 int getMedian(const int* arr, int size);;
@@ -134,6 +143,7 @@ void oled_screen_task(void *pvParameters) {
     int right_sensor_distance = 0;
     float servo_micros = 0.0f;
     float motor_micros = 0.0f;
+    float temperature = 27.0f;
 
     // Left: 400    Front 400   Right 400
     char front_sensor_text[13];
@@ -141,8 +151,9 @@ void oled_screen_task(void *pvParameters) {
     char right_sensor_text[13];
     char servo_text[15];
     char motor_text[15];
+    char temperature_text[15];
 
-    
+
     // Setup of I2C
     i2c_init(i2c1, 400000);
     gpio_set_function(i2c_sda_pin, GPIO_FUNC_I2C);
@@ -152,17 +163,25 @@ void oled_screen_task(void *pvParameters) {
 
     ssd1306_t disp;
     disp.external_vcc = false;
-    ssd1306_init(&disp, 128, 64, 0x3C, i2c1);
+    bool sensor_is_connected = ssd1306_init(&disp, 128, 64, 0x3C, i2c1);
+    // Delete the task if an OLED screen is not connected 
+    if(sensor_is_connected != true) {
+        vTaskDelete(NULL);
+    }
     ssd1306_clear(&disp);
+
     /*ssd1306_bmp_show_image(&disp, image_data, image_size);
     ssd1306_show(&disp);*/
 
     while(true) {
+
         xQueuePeek(xFrontQueue, &front_sensor_distance, portMAX_DELAY);
         xQueuePeek(xRightQueue, &right_sensor_distance, portMAX_DELAY);
         xQueuePeek(xLeftQueue, &left_sensor_distance, portMAX_DELAY);
         xQueuePeek(xMotorQueue, &motor_micros, portMAX_DELAY);
         xQueuePeek(xServoQueue, &servo_micros, portMAX_DELAY);
+        xQueuePeek(xDhtQueue, &temperature, portMAX_DELAY);
+        ssd1306_clear(&disp);
 
         snprintf(front_sensor_text, 12, "Front: %d\0", front_sensor_distance);
         ssd1306_draw_string(&disp, 38, 10, 1, front_sensor_text);
@@ -177,13 +196,41 @@ void oled_screen_task(void *pvParameters) {
         ssd1306_draw_string(&disp, 30, 38, 1, motor_text);
 
         snprintf(servo_text, 14, "Servo: %.1f\0", servo_micros);
-        ssd1306_draw_string(&disp, 30, 52, 1, servo_text);
+        ssd1306_draw_string(&disp, 2, 52, 1, servo_text);
+
+        snprintf(temperature_text, 14, "%.1fC\0", temperature);
+        ssd1306_draw_string(&disp, 98, 52, 1, temperature_text);
 
         ssd1306_show(&disp);
-        vTaskDelay(5);
-        ssd1306_clear(&disp);
     }
+}
 
+void dht_sensor_task(void *pvParameters) {
+    const uint dht_pin = DHT_PIN;
+    static const dht_model_t DHT_MODEL = DHT22;
+    
+    float humidity = 0.0f;
+    float temperature_c = 27.0f;
+    float previous_temperature_c = 27.0f;
+    xQueueOverwrite(xDhtQueue, &temperature_c);
+    dht_t dht;
+    dht_init(&dht, DHT_MODEL, pio0, dht_pin, true);
+
+    vTaskDelay(1000);
+    while (true) {
+        dht_start_measurement(&dht);
+        dht_result_t result = dht_finish_measurement_blocking(&dht, &humidity, &temperature_c);
+        if (result == DHT_RESULT_OK) {
+            float temperature_to_send = 0.8f * previous_temperature_c + 0.2f * temperature_c;
+            xQueueOverwrite(xDhtQueue, &temperature_to_send);
+        } 
+        if (result == DHT_RESULT_TIMEOUT) {
+            temperature_c = previous_temperature_c;
+            vTaskDelete(NULL);
+        }
+        previous_temperature_c = temperature_c;
+        vTaskDelay(200);
+    }
 }
 
 void front_sensor_task(void *pvParameters) {
@@ -192,7 +239,7 @@ void front_sensor_task(void *pvParameters) {
 
     int front_distance_array[ARRAY_SIZE] = {0};
     int front_distance_count = 0;
-
+    float temperature = 27.0f;
     setupUltrasonicPins(front_trig_pin, front_echo_pin);
 
     for(; front_distance_count < ARRAY_SIZE -1; front_distance_count++){
@@ -204,7 +251,8 @@ void front_sensor_task(void *pvParameters) {
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount();
     while(true) {
-        int front_distance = getCm(front_trig_pin, front_echo_pin);
+        xQueuePeek(xDhtQueue, &temperature, 0);
+        int front_distance = getCm_with_temperature(front_trig_pin, front_echo_pin, temperature);
         if(front_distance > MAX_FRONT_DISTANCE) front_distance = MAX_FRONT_DISTANCE;
         front_distance_count++;
         if(front_distance_count > ARRAY_SIZE - 1) front_distance_count = 0;
@@ -230,6 +278,7 @@ void left_sensor_task(void *pvParameters){
 
     int left_distance_count = 0;
     int left_distance_array[ARRAY_SIZE] = {0};
+    float temperature = 27.0f;
     setupUltrasonicPins(left_trig_pin, left_echo_pin);
 
     for(; left_distance_count < ARRAY_SIZE - 1; left_distance_count++) {
@@ -240,7 +289,8 @@ void left_sensor_task(void *pvParameters){
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount(); 
     while(true) {
-        int left_distance = getCm(left_trig_pin, left_echo_pin);
+        xQueuePeek(xDhtQueue, &temperature, 0);
+        int left_distance = getCm_with_temperature(left_trig_pin, left_echo_pin, temperature);
         if(left_distance > MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
         left_distance_count++;
         if(left_distance_count > ARRAY_SIZE-1) left_distance_count = 0;
@@ -266,6 +316,7 @@ void right_sensor_task(void *pvParameters){
 
     int right_distance_count = 0;
     int right_distance_array[ARRAY_SIZE] = {0};
+    float temperature = 27.0f;
     setupUltrasonicPins(right_trig_pin, right_echo_pin);
 
     for(; right_distance_count < ARRAY_SIZE - 1; right_distance_count++) {
@@ -276,7 +327,8 @@ void right_sensor_task(void *pvParameters){
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount(); 
     while(true) {
-        int right_distance = getCm(right_trig_pin, right_echo_pin);
+        xQueuePeek(xDhtQueue, &temperature, 0);
+        int right_distance = getCm_with_temperature(right_trig_pin, right_echo_pin, temperature);
         if(right_distance > MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
         right_distance_count++;
         if(right_distance_count > ARRAY_SIZE-1) right_distance_count = 0;
@@ -450,6 +502,7 @@ int main()
     sleep_ms(1500);
 
     //Create queue for the side sensors
+    xDhtQueue   = xQueueCreate(1, sizeof(float));
     xFrontQueue = xQueueCreate(1, sizeof(int));
     xRightQueue = xQueueCreate(1, sizeof(int));
     xLeftQueue  = xQueueCreate(1, sizeof(int));
@@ -458,6 +511,7 @@ int main()
     // Necessary to check if tasks are created
     BaseType_t xLed_Task_Returned;
     BaseType_t xOled_Screen_Task_Returned;
+    BaseType_t xDht_Sensor_Returned;
     BaseType_t xFront_Sensor_Returned;
     BaseType_t xRigth_Sensor_Returned;
     BaseType_t xLeft_Sensor_Returned;
@@ -484,6 +538,18 @@ int main()
                 &xOled_Screen_Task_Handle);
     if(xOled_Screen_Task_Returned != pdPASS) {
         printf("OLED Screen Task could not be created\n");
+        return 0;
+    }
+
+    xDht_Sensor_Returned = xTaskCreate(dht_sensor_task,
+                "DHT_Sensor_Task",
+                512,
+                NULL,
+                2,
+                &xDht_Sensor_Handle);
+    if(xDht_Sensor_Returned != pdPASS) {
+        printf("DHT Sensor Task could not be created\n");
+        return 0;
     }
 
     xFront_Sensor_Returned = xTaskCreate(front_sensor_task, 
