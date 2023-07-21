@@ -7,10 +7,13 @@
 
 #include "pico/stdlib.h"
 #include "pico/float.h"
+
 #include "servo.h"
 #include "ultrasonic.h"
+
 #include "ssd1306.h"
 #include "image.h"
+
 #include "dht.h"
 
  #define FRONT_SENSOR_DEMO 1
