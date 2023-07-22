@@ -16,8 +16,8 @@
 
 #include "dht.h"
 
- #define FRONT_SENSOR_DEMO 1
- #define SIDE_SENSOR_DEMO 1
+//  #define FRONT_SENSOR_DEMO 1
+//  #define SIDE_SENSOR_DEMO 1
 
 // Trigonometric Macros
 /*------------------------------------------------------------*/
@@ -32,21 +32,28 @@
 
 // Pin Connections
 /*------------------------------------------------------------*/
-#define LED_PIN         25
-#define OLED_SDA_PIN    6
-#define OLED_SCL_PIN    7
+#define LED_PIN              25
 
-#define DHT_PIN         4
+#define OLED_SDA_PIN         6
+#define OLED_SCL_PIN         7
 
-#define RIGHT_TRIG_PIN  16
-#define RIGHT_ECHO_PIN  17
-#define LEFT_TRIG_PIN   19
-#define LEFT_ECHO_PIN   18
-#define FRONT_TRIG_PIN  21 
-#define FRONT_ECHO_PIN  20
+#define MPU6050_SDA_PIN      8
+#define MPU6050_SCL_PIN      9
 
-#define MOTOR_ESC_PIN   5
-#define SERVO_PIN       2
+#define LEFT_IR_SENSOR_PIN   10
+#define RIGHT_IR_SENSOR_PIN  11
+
+#define DHT_PIN              4
+
+#define RIGHT_TRIG_PIN       16
+#define RIGHT_ECHO_PIN       17
+#define LEFT_TRIG_PIN        19
+#define LEFT_ECHO_PIN        18
+#define FRONT_TRIG_PIN       21 
+#define FRONT_ECHO_PIN       20
+
+#define MOTOR_ESC_PIN        5
+#define SERVO_PIN            2
 
 /*------------------------------------------------------------*/
 
