@@ -98,7 +98,7 @@
 #define MOTOR_UPDATE_PERIOD                 10   // Milliseconds
 #define LED_BLINK_PERIOD                    1000 // Milliseconds        
 #define OLED_REFRESH_PERIOD                 50   // Milliseconds
-#define OLED
+#define DHT_SENSOR_READ_PERIOD              2000 // Milliseconds
 
 /*------------------------------------------------------------*/
 
@@ -183,6 +183,8 @@ void oled_screen_task(void *pvParameters) {
     /*ssd1306_bmp_show_image(&disp, image_data, image_size);
     ssd1306_show(&disp);*/
 
+    TickType_t xNextWaitTime;
+    xNextWaitTime = xTaskGetTickCount();
     while(true) {
 
         xQueuePeek(xFrontQueue, &front_sensor_distance, portMAX_DELAY);
@@ -212,6 +214,7 @@ void oled_screen_task(void *pvParameters) {
         ssd1306_draw_string(&disp, 98, 52, 1, temperature_text);
 
         ssd1306_show(&disp);
+        xTaskDelayUntil(&xNextWaitTime, (TickType_t)OLED_REFRESH_PERIOD / portTICK_PERIOD_MS);
     }
 }
 
@@ -226,7 +229,7 @@ void dht_sensor_task(void *pvParameters) {
     dht_t dht;
     dht_init(&dht, DHT_MODEL, pio0, dht_pin, true);
 
-    vTaskDelay(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
     while (true) {
         dht_start_measurement(&dht);
         dht_result_t result = dht_finish_measurement_blocking(&dht, &humidity, &temperature_c);
@@ -239,7 +242,7 @@ void dht_sensor_task(void *pvParameters) {
             vTaskDelete(NULL);
         }
         previous_temperature_c = temperature_c;
-        vTaskDelay(200);
+        vTaskDelay(DHT_SENSOR_READ_PERIOD / portTICK_PERIOD_MS);
     }
 }
 
