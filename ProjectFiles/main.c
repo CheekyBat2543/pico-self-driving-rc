@@ -18,6 +18,7 @@
 
 //  #define FRONT_SENSOR_DEMO 1
 //  #define SIDE_SENSOR_DEMO 1
+#define PRINT_GYROSCOPE 1
 
 // Trigonometric Macros
 /*------------------------------------------------------------*/
@@ -49,8 +50,8 @@
 #define RIGHT_ECHO_PIN       17
 #define LEFT_TRIG_PIN        19
 #define LEFT_ECHO_PIN        18
-#define FRONT_TRIG_PIN       21 
-#define FRONT_ECHO_PIN       20
+#define FRONT_TRIG_PIN       6 
+#define FRONT_ECHO_PIN       7
 
 #define MOTOR_ESC_PIN        5
 #define SERVO_PIN            2
@@ -96,9 +97,9 @@
 #define SIDE_SENSOR_READ_PERIOD             50   // Milliseconds
 #define SERVO_UPDATE_PERIOD                 50   // Milliseconds
 #define MOTOR_UPDATE_PERIOD                 50   // Milliseconds
-#define MPU6050_READ_PERIOD                 50   // Milliseconds
+#define MPU6050_READ_PERIOD                 20   // Milliseconds
 #define LED_BLINK_PERIOD                    1000 // Milliseconds        
-#define OLED_REFRESH_PERIOD                 50   // Milliseconds
+#define OLED_REFRESH_PERIOD                 20   // Milliseconds
 #define DHT_SENSOR_READ_PERIOD              2000 // Milliseconds
 
 /*------------------------------------------------------------*/
@@ -158,21 +159,37 @@ void oled_screen_task(void *pvParameters) {
     printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
     printf("OLED Screen task is started!\n");
     printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
-
-
+    const char degree_symbol = 248;
+    vTaskDelay(250 / portTICK_PERIOD_MS);
     int front_sensor_distance = 0;
     int left_sensor_distance = 0;
     int right_sensor_distance = 0;
+    #ifdef PRINT_GYROSCOPE
+    mpu6050_vectorf_t accel;
+    accel.x = 0.0f; accel.y = 0.0f; accel.z = 0.0f;
+    mpu6050_vectorf_t gyro;
+    gyro.x = 0.0f; gyro.y = 0.0f; gyro.z = 0.0f;
+    #else
     float servo_micros = 0.0f;
     float motor_micros = 0.0f;
+    #endif
     float temperature = 27.0f;
 
     // Left: 400    Front 400   Right 400
-    char front_sensor_text[13];
-    char left_sensor_text[13];
-    char right_sensor_text[13];
+    char front_sensor_text[15];
+    char left_sensor_text[15];
+    char right_sensor_text[15];
+    #ifdef PRINT_GYROSCOPE
+    char accel_text_x[15];
+    char gyro_text_x[15];
+    char accel_text_y[15];
+    char gyro_text_y[15];
+    char accel_text_z[15];
+    char gyro_text_z[15];
+    #else
     char servo_text[15];
     char motor_text[15];
+    #endif
     char temperature_text[15];
 
     // Setup of I2C
@@ -184,6 +201,7 @@ void oled_screen_task(void *pvParameters) {
 
     ssd1306_t disp;
     disp.external_vcc = false;
+    vTaskDelay(250 / portTICK_PERIOD_MS);
     vTaskSuspendAll();
     bool sensor_is_connected = ssd1306_init(&disp, 128, 64, 0x3C, i2c0);
     xTaskResumeAll();
@@ -205,30 +223,51 @@ void oled_screen_task(void *pvParameters) {
         xQueuePeek(xFrontQueue, &front_sensor_distance, portMAX_DELAY);
         xQueuePeek(xRightQueue, &right_sensor_distance, portMAX_DELAY);
         xQueuePeek(xLeftQueue, &left_sensor_distance, portMAX_DELAY);
+        #ifdef PRINT_GYROSCOPE
+        xQueuePeek(xAccelQueue, &accel, portMAX_DELAY);
+        xQueuePeek(xGyroQueue, &gyro, portMAX_DELAY);
+        #else
         xQueuePeek(xMotorQueue, &motor_micros, portMAX_DELAY);
         xQueuePeek(xServoQueue, &servo_micros, portMAX_DELAY);
+        #endif
         xQueuePeek(xDhtQueue, &temperature, portMAX_DELAY);
+
         vTaskSuspendAll();
         ssd1306_clear(&disp);
 
         snprintf(front_sensor_text, 12, "Front: %d\0", front_sensor_distance);
-        ssd1306_draw_string(&disp, 38, 10, 1, front_sensor_text);
-
+        ssd1306_draw_string(&disp, 28, 10, 1, front_sensor_text);
 
         snprintf(left_sensor_text, 12, "Left: %d\0", left_sensor_distance);
         ssd1306_draw_string(&disp, 10, 24, 1, left_sensor_text);
 
         snprintf(right_sensor_text, 12, "Right: %d\0", right_sensor_distance);
         ssd1306_draw_string(&disp, 70, 24, 1, right_sensor_text);  
+        #ifdef PRINT_GYROSCOPE
+        snprintf(accel_text_x, 15,"x:%.1f\0", accel.x);
+        ssd1306_draw_string(&disp, 1, 38, 1, accel_text_x);
+        snprintf(accel_text_y, 15,"y:%.1f\0",accel.y);
+        ssd1306_draw_string(&disp, 48, 38, 1, accel_text_y);
+        snprintf(accel_text_z, 15,"z:%.1f\0", accel.z);
+        ssd1306_draw_string(&disp, 96, 38, 1, accel_text_z);
 
+        snprintf(gyro_text_x, 15,"x:%.1f\0", gyro.x);
+        ssd1306_draw_string(&disp, 1, 52, 1, gyro_text_x);
+        snprintf(gyro_text_y, 15,"y:%.1f\0", gyro.y);
+        ssd1306_draw_string(&disp, 48, 52, 1, gyro_text_y);
+        snprintf(gyro_text_z, 15,"z:%.1f\0", gyro.z);
+        ssd1306_draw_string(&disp, 96, 52, 1, gyro_text_z);
+        #else
         snprintf(motor_text, 14, "Motor: %.1f\0", motor_micros);
         ssd1306_draw_string(&disp, 30, 38, 1, motor_text);
 
         snprintf(servo_text, 14, "Servo: %.1f\0", servo_micros);
         ssd1306_draw_string(&disp, 2, 52, 1, servo_text);
+        #endif
 
-        snprintf(temperature_text, 14, "%.1fC\0", temperature);
-        ssd1306_draw_string(&disp, 98, 52, 1, temperature_text);
+
+        snprintf(temperature_text, 14, "%.1fC\0", temperature, degree_symbol);
+        ssd1306_draw_string(&disp, 95, 10, 1, temperature_text);
 
         ssd1306_show(&disp);
         xTaskResumeAll();
@@ -440,13 +479,13 @@ void mpu6050_task(void *pvParameters) {
         mpu6050_set_temperature_measuring(&mpu6050, false);
         mpu6050_set_gyroscope_measuring(&mpu6050, true);
         mpu6050_set_accelerometer_measuring(&mpu6050, true);
-        mpu6050_set_dlpf_mode(&mpu6050,  MPU6050_DLPF_3);
+        mpu6050_set_dlpf_mode(&mpu6050,  MPU6050_DLPF_5);
+        mpu6050_set_dhpf_mode(&mpu6050, MPU6050_DHPF_1_25HZ);
 
         mpu6050_calibrate_gyro(&mpu6050, 1000U);
 
         mpu6050_find_offset_values(&mpu6050, 1000U);
         xTaskResumeAll();
-        // mpu6050_set_dhpf_mode(&mpu6050, MPU6050_DHPF_1_25HZ);
     } 
 
     vTaskResume(xLed_Task_Handle);
@@ -478,8 +517,8 @@ void mpu6050_task(void *pvParameters) {
         xTaskResumeAll();
         xQueueOverwrite(xAccelQueue, accel);
         xQueueOverwrite(xGyroQueue, gyro);
-        printf("Accelerometer ==> x: %.2f, y: %0.2f, z: %0.2f\n", accel->x, accel->y, accel->z);
-        printf("Gyroscope     ==> x: %0.2f, y: %0.2f, z: %0.2f\n\n", gyro->x, gyro->y, gyro->z);
+        printf("Accelerometer ==> x: %.2f, y: %.2f, z: %.2f\n", accel->x, accel->y, accel->z);
+        printf("Gyroscope     ==> x: %.2f, y: %.2f, z: %.2f\n\n", gyro->x, gyro->y, gyro->z);
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)(50 / portTICK_PERIOD_MS));
     }
 }
@@ -681,7 +720,7 @@ int main()
 
     xOled_Screen_Task_Returned = xTaskCreate(oled_screen_task,
                 "OLED_Screen_Task",
-                configMINIMAL_STACK_SIZE,
+                configMINIMAL_STACK_SIZE * 3,
                 NULL,
                 2,
                 &xOled_Screen_Task_Handle);
