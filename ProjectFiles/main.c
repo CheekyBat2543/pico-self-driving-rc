@@ -96,6 +96,7 @@
 #define SIDE_SENSOR_READ_PERIOD             50   // Milliseconds
 #define SERVO_UPDATE_PERIOD                 50   // Milliseconds
 #define MOTOR_UPDATE_PERIOD                 50   // Milliseconds
+#define MPU6050_READ_PERIOD                 50   // Milliseconds
 #define LED_BLINK_PERIOD                    1000 // Milliseconds        
 #define OLED_REFRESH_PERIOD                 50   // Milliseconds
 #define DHT_SENSOR_READ_PERIOD              2000 // Milliseconds
@@ -110,6 +111,8 @@ static QueueHandle_t xRightQueue     = NULL;
 static QueueHandle_t xFrontQueue     = NULL;
 static QueueHandle_t xServoQueue     = NULL;
 static QueueHandle_t xMotorQueue     = NULL;
+static QueueHandle_t xAccelQueue     = NULL;
+static QueueHandle_t xGyroQueue      = NULL;
 
 // FreeRTOS task handles
 TaskHandle_t xLed_Task_Handle = NULL;
@@ -172,22 +175,25 @@ void oled_screen_task(void *pvParameters) {
     char motor_text[15];
     char temperature_text[15];
 
-
     // Setup of I2C
-    i2c_init(i2c0, 400000);
-    gpio_set_function(i2c_sda_pin, GPIO_FUNC_I2C);
+    // i2c_init(i2c0, 400000);
+    /*gpio_set_function(i2c_sda_pin, GPIO_FUNC_I2C);
     gpio_set_function(i2c_scl_pin, GPIO_FUNC_I2C);
     gpio_pull_up(i2c_sda_pin); 
-    gpio_pull_up(i2c_scl_pin);
+    gpio_pull_up(i2c_scl_pin);*/
 
     ssd1306_t disp;
     disp.external_vcc = false;
+    vTaskSuspendAll();
     bool sensor_is_connected = ssd1306_init(&disp, 128, 64, 0x3C, i2c0);
+    xTaskResumeAll();
     // Delete the task if an OLED screen is not connected 
     if(sensor_is_connected != true) {
         vTaskDelete(NULL);
     }
+    vTaskSuspendAll();
     ssd1306_clear(&disp);
+    xTaskResumeAll();
 
     /*ssd1306_bmp_show_image(&disp, image_data, image_size);
     ssd1306_show(&disp);*/
@@ -202,6 +208,7 @@ void oled_screen_task(void *pvParameters) {
         xQueuePeek(xMotorQueue, &motor_micros, portMAX_DELAY);
         xQueuePeek(xServoQueue, &servo_micros, portMAX_DELAY);
         xQueuePeek(xDhtQueue, &temperature, portMAX_DELAY);
+        vTaskSuspendAll();
         ssd1306_clear(&disp);
 
         snprintf(front_sensor_text, 12, "Front: %d\0", front_sensor_distance);
@@ -224,7 +231,7 @@ void oled_screen_task(void *pvParameters) {
         ssd1306_draw_string(&disp, 98, 52, 1, temperature_text);
 
         ssd1306_show(&disp);
-        
+        xTaskResumeAll();
         if(disp.status == false) {
             printf("\n-------------------------------------------------\n");
             printf("OLED TASK IS DELETED\n");
@@ -425,7 +432,7 @@ void mpu6050_task(void *pvParameters) {
         sleep_ms(250);
         printf("Beginning MPU6050\n");
         // Set scale of gyroscope
-        taskENTER_CRITICAL();
+        vTaskSuspendAll();
         mpu6050_set_scale(&mpu6050, MPU6050_SCALE_2000DPS);
         // Set range of accelerometer
         mpu6050_set_range(&mpu6050, MPU6050_RANGE_16G);
@@ -433,13 +440,12 @@ void mpu6050_task(void *pvParameters) {
         mpu6050_set_temperature_measuring(&mpu6050, false);
         mpu6050_set_gyroscope_measuring(&mpu6050, true);
         mpu6050_set_accelerometer_measuring(&mpu6050, true);
-        taskEXIT_CRITICAL();
-        mpu6050_set_dlpf_mode(&mpu6050,  MPU6050_DLPF_2);
+        mpu6050_set_dlpf_mode(&mpu6050,  MPU6050_DLPF_3);
 
         mpu6050_calibrate_gyro(&mpu6050, 1000U);
 
         mpu6050_find_offset_values(&mpu6050, 1000U);
-        
+        xTaskResumeAll();
         // mpu6050_set_dhpf_mode(&mpu6050, MPU6050_DHPF_1_25HZ);
     } 
 
@@ -450,6 +456,7 @@ void mpu6050_task(void *pvParameters) {
     vTaskResume(xServo_Task_Handle);
     vTaskResume(xMotor_Task_Handle);
     vTaskResume(xDht_Sensor_Handle);
+    vTaskResume(xOled_Screen_Task_Handle);
 
     if(mpu6050_state == 0) {
         printf("\n\n\n-------------------------------------------------\n");
@@ -461,14 +468,16 @@ void mpu6050_task(void *pvParameters) {
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount(); 
     while (true) {
-        taskENTER_CRITICAL();
+        vTaskSuspendAll();
         // Fetch all data from the sensor | I2C is only used here
         mpu6050_event(&mpu6050);
 
         // Pointers to float vectors with all the results
         mpu6050_vectorf_t * accel = mpu6050_get_accelerometer(&mpu6050);
         mpu6050_vectorf_t * gyro = mpu6050_get_gyroscope(&mpu6050);
-        taskEXIT_CRITICAL();
+        xTaskResumeAll();
+        xQueueOverwrite(xAccelQueue, accel);
+        xQueueOverwrite(xGyroQueue, gyro);
         printf("Accelerometer ==> x: %.2f, y: %0.2f, z: %0.2f\n", accel->x, accel->y, accel->z);
         printf("Gyroscope     ==> x: %0.2f, y: %0.2f, z: %0.2f\n\n", gyro->x, gyro->y, gyro->z);
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)(50 / portTICK_PERIOD_MS));
@@ -644,6 +653,9 @@ int main()
     xLeftQueue  = xQueueCreate(1, sizeof(int));
     xServoQueue = xQueueCreate(1, sizeof(float));
     xMotorQueue = xQueueCreate(1, sizeof(float));
+    xAccelQueue = xQueueCreate(1, sizeof(mpu6050_vectorf_t));
+    xGyroQueue = xQueueCreate(1, sizeof(mpu6050_vectorf_t));
+
     // Necessary to check if tasks are created
     BaseType_t xLed_Task_Returned;
     BaseType_t xOled_Screen_Task_Returned;
@@ -756,7 +768,7 @@ int main()
     }
     printf("All Tasks are successfuly created\n\n");
 
-    
+    vTaskSuspend(xOled_Screen_Task_Handle);
     vTaskSuspend(xMotor_Task_Handle);
     vTaskSuspend(xServo_Task_Handle);
     vTaskSuspend(xFront_Sensor_Handle);
