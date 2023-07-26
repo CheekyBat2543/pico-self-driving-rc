@@ -10,11 +10,11 @@
 
 #include "servo.h"
 #include "ultrasonic.h"
+#include "MPU6050.h"
+#include "dht.h"
 
 #include "ssd1306.h"
 #include "image.h"
-
-#include "dht.h"
 
 //  #define FRONT_SENSOR_DEMO 1
 //  #define SIDE_SENSOR_DEMO 1
@@ -34,11 +34,11 @@
 /*------------------------------------------------------------*/
 #define LED_PIN              25
 
-#define OLED_SDA_PIN         6
-#define OLED_SCL_PIN         7
+#define OLED_SDA_PIN         16
+#define OLED_SCL_PIN         17
 
-#define MPU6050_SDA_PIN      8
-#define MPU6050_SCL_PIN      9
+#define MPU6050_SDA_PIN      16
+#define MPU6050_SCL_PIN      17
 
 #define LEFT_IR_SENSOR_PIN   10
 #define RIGHT_IR_SENSOR_PIN  11
@@ -94,8 +94,8 @@
 #define MOTOR_STATE_CHANGE_INTERVAL         800  // Milliseconds
 #define FRONT_SENSOR_READ_PERIOD            50   // Milliseconds
 #define SIDE_SENSOR_READ_PERIOD             50   // Milliseconds
-#define SERVO_UPDATE_PERIOD                 10   // Milliseconds
-#define MOTOR_UPDATE_PERIOD                 10   // Milliseconds
+#define SERVO_UPDATE_PERIOD                 50   // Milliseconds
+#define MOTOR_UPDATE_PERIOD                 50   // Milliseconds
 #define LED_BLINK_PERIOD                    1000 // Milliseconds        
 #define OLED_REFRESH_PERIOD                 50   // Milliseconds
 #define DHT_SENSOR_READ_PERIOD              2000 // Milliseconds
@@ -118,6 +118,7 @@ TaskHandle_t xDht_Sensor_Handle = NULL;
 TaskHandle_t xFront_Sensor_Handle = NULL;
 TaskHandle_t xLeft_Sensor_Handle = NULL;
 TaskHandle_t xRight_Sensor_Handle = NULL;
+TaskHandle_t xMpu6050_Sensor_Handle = NULL;
 TaskHandle_t xServo_Task_Handle = NULL;
 TaskHandle_t xMotor_Task_Handle = NULL;
 
@@ -134,6 +135,10 @@ int roundToIntervalInt(const int number, int round_interval);
 // Led task that blinks so that we can observe if the board works or not
 void led_task() {   
     const uint led_pin = LED_PIN; 
+    printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+    printf("LED Task is started!\n");
+    printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
+
     gpio_init(led_pin);
     gpio_set_dir(led_pin, GPIO_OUT);
     while (true) {
@@ -147,6 +152,10 @@ void led_task() {
 void oled_screen_task(void *pvParameters) {
     const uint i2c_sda_pin = OLED_SDA_PIN;
     const uint i2c_scl_pin = OLED_SCL_PIN;
+    printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+    printf("OLED Screen task is started!\n");
+    printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
+
 
     int front_sensor_distance = 0;
     int left_sensor_distance = 0;
@@ -165,15 +174,15 @@ void oled_screen_task(void *pvParameters) {
 
 
     // Setup of I2C
-    i2c_init(i2c1, 400000);
+    i2c_init(i2c0, 400000);
     gpio_set_function(i2c_sda_pin, GPIO_FUNC_I2C);
     gpio_set_function(i2c_scl_pin, GPIO_FUNC_I2C);
-    gpio_pull_up(i2c_sda_pin);
+    gpio_pull_up(i2c_sda_pin); 
     gpio_pull_up(i2c_scl_pin);
 
     ssd1306_t disp;
     disp.external_vcc = false;
-    bool sensor_is_connected = ssd1306_init(&disp, 128, 64, 0x3C, i2c1);
+    bool sensor_is_connected = ssd1306_init(&disp, 128, 64, 0x3C, i2c0);
     // Delete the task if an OLED screen is not connected 
     if(sensor_is_connected != true) {
         vTaskDelete(NULL);
@@ -198,6 +207,7 @@ void oled_screen_task(void *pvParameters) {
         snprintf(front_sensor_text, 12, "Front: %d\0", front_sensor_distance);
         ssd1306_draw_string(&disp, 38, 10, 1, front_sensor_text);
 
+
         snprintf(left_sensor_text, 12, "Left: %d\0", left_sensor_distance);
         ssd1306_draw_string(&disp, 10, 24, 1, left_sensor_text);
 
@@ -214,6 +224,13 @@ void oled_screen_task(void *pvParameters) {
         ssd1306_draw_string(&disp, 98, 52, 1, temperature_text);
 
         ssd1306_show(&disp);
+        
+        if(disp.status == false) {
+            printf("\n-------------------------------------------------\n");
+            printf("OLED TASK IS DELETED\n");
+            printf("---------------------------------------------------\n\n");
+            vTaskDelete(NULL);
+        }
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)OLED_REFRESH_PERIOD / portTICK_PERIOD_MS);
     }
 }
@@ -221,15 +238,19 @@ void oled_screen_task(void *pvParameters) {
 void dht_sensor_task(void *pvParameters) {
     const uint dht_pin = DHT_PIN;
     static const dht_model_t DHT_MODEL = DHT22;
-    
+    printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+    printf("DHT22 task is started!\n");
+    printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
+
+
     float humidity = 0.0f;
     float temperature_c = 27.0f;
     float previous_temperature_c = 27.0f;
     xQueueOverwrite(xDhtQueue, &temperature_c);
     dht_t dht;
     dht_init(&dht, DHT_MODEL, pio0, dht_pin, true);
+    // vTaskDelay(1000 / portTICK_PERIOD_MS);
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
     while (true) {
         dht_start_measurement(&dht);
         dht_result_t result = dht_finish_measurement_blocking(&dht, &humidity, &temperature_c);
@@ -239,6 +260,10 @@ void dht_sensor_task(void *pvParameters) {
         } 
         if (result == DHT_RESULT_TIMEOUT) {
             temperature_c = previous_temperature_c;
+            gpio_deinit(DHT_PIN);
+            printf("\n-------------------------------------------------\n");
+            printf("DHT SENSOR TASK IS DELETED\n");
+            printf("---------------------------------------------------\n\n");            
             vTaskDelete(NULL);
         }
         previous_temperature_c = temperature_c;
@@ -249,6 +274,10 @@ void dht_sensor_task(void *pvParameters) {
 void front_sensor_task(void *pvParameters) {
     const uint front_trig_pin = FRONT_TRIG_PIN;
     const uint front_echo_pin = FRONT_ECHO_PIN;
+    
+    printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+    printf("Front Sensor Task is started!\n");
+    printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
 
     int front_distance_array[ARRAY_SIZE] = {0};
     int front_distance_count = 0;
@@ -289,6 +318,10 @@ void left_sensor_task(void *pvParameters){
     const uint left_trig_pin  = LEFT_TRIG_PIN;
     const uint left_echo_pin  = LEFT_ECHO_PIN;
 
+    printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+    printf("Left Sensor Task is started!\n");
+    printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
+
     int left_distance_count = 0;
     int left_distance_array[ARRAY_SIZE] = {0};
     float temperature = 27.0f;
@@ -327,6 +360,10 @@ void right_sensor_task(void *pvParameters){
     const uint right_trig_pin  = RIGHT_TRIG_PIN;
     const uint right_echo_pin  = RIGHT_ECHO_PIN;
 
+    printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+    printf("Right Sensor Task is started!\n");
+    printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
+
     int right_distance_count = 0;
     int right_distance_array[ARRAY_SIZE] = {0};
     float temperature = 27.0f;
@@ -361,8 +398,88 @@ void right_sensor_task(void *pvParameters){
     }
 }
 
+void mpu6050_task(void *pvParameters) {
+    const uint mpu6050_sda_pin = MPU6050_SDA_PIN;
+    const uint mpu6050_scl_pin = MPU6050_SCL_PIN;
+
+    printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+    printf("MPU6050 Task is Started!\n");
+    printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
+
+    gpio_init(mpu6050_sda_pin);
+    gpio_init(mpu6050_scl_pin);
+    gpio_set_function(mpu6050_sda_pin, GPIO_FUNC_I2C);
+    gpio_set_function(mpu6050_scl_pin, GPIO_FUNC_I2C);
+    // Don't forget the pull ups! | Or use external ones
+    gpio_pull_up(mpu6050_sda_pin);
+    gpio_pull_up(mpu6050_scl_pin);
+    printf("Setted MPU6050 Pins\n");
+    // Pass in the I2C driver (Important for dual-core operations). The second parameter is the address,
+    // which can change if you connect pin A0 to GND or to VCC.
+    mpu6050_t mpu6050 = mpu6050_init(i2c_default, MPU6050_ADDRESS_A0_GND);
+    printf("Initilized MPU6050 sensor\n");
+    // Check if the MPU6050 can initialize
+    if (mpu6050_begin(&mpu6050)) {
+        printf("Beginning MPU6050\n");
+        // Set scale of gyroscope
+        mpu6050_set_scale(&mpu6050, MPU6050_SCALE_1000DPS);
+        // Set range of accelerometer
+        mpu6050_set_range(&mpu6050, MPU6050_RANGE_16G);
+
+        // Enable temperature, gyroscope and accelerometer readings
+        mpu6050_set_temperature_measuring(&mpu6050, false);
+        mpu6050_set_gyroscope_measuring(&mpu6050, true);
+        mpu6050_set_accelerometer_measuring(&mpu6050, true);
+
+        // Enable free fall, motion and zero motion interrupt flags
+        mpu6050_set_int_free_fall(&mpu6050, false);
+        mpu6050_set_int_motion(&mpu6050, false);
+        mpu6050_set_int_zero_motion(&mpu6050, false);
+
+        // Set motion detection threshold and duration
+        mpu6050_set_motion_detection_threshold(&mpu6050, 2);
+        mpu6050_set_motion_detection_duration(&mpu6050, 5);
+
+        // Set zero motion detection threshold and duration
+        mpu6050_set_zero_motion_detection_threshold(&mpu6050, 4);
+        mpu6050_set_zero_motion_detection_duration(&mpu6050, 2);
+
+        // mpu6050_calibrate_gyro(&mpu6050, 250U);
+        // mpu6050_find_offset_values(&mpu6050, 2000);
+        
+        /*mpu6050_set_dlpf_mode(&mpu6050,  MPU6050_DLPF_3);
+        mpu6050_set_dhpf_mode(&mpu6050, MPU6050_DHPF_1_25HZ);*/
+        
+    } else {
+            printf("\n\n\n-------------------------------------------------\n");
+            printf("MPU6050 Task is deleted!\n");
+            printf("---------------------------------------------------\n\n\n");
+            vTaskDelete(NULL);
+    }
+    printf("MPU6050 before while loop\n");
+    while (true) {
+        // Fetch all data from the sensor | I2C is only used here
+        mpu6050_event(&mpu6050);
+
+        // Pointers to float vectors with all the results
+        mpu6050_vectorf_t * accel = mpu6050_get_accelerometer(&mpu6050);
+        mpu6050_vectorf_t * gyro = mpu6050_get_gyroscope(&mpu6050);
+
+        printf("Accelerometer ==> x: %.2f, y: %0.2f, z: %0.2f\n", accel->x, accel->y, accel->z);
+        printf("Gyroscope     ==> x: %0.2f, y: %0.2f, z: %0.2f\n\n", gyro->x, gyro->y, gyro->z);
+
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+}
+
 void servo_task(void *pvParameters) {
     const uint servo_pin = SERVO_PIN;
+
+    printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+    printf("Servo task is started!\n");
+    printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
+
+
     //Servo Conversion Rate      ==>     1000us = 0 Degrees,   1500us = 60 Degrees,   2000us = 120 Degrees.
     const float MIDDLE_MICROS = (MAX_SERVO_MICROS + MIN_SERVO_MICROS) / 2;
     float current_micros = MIDDLE_MICROS;
@@ -391,7 +508,7 @@ void servo_task(void *pvParameters) {
         xQueuePeek(xFrontQueue, &front_sensor_distance, portMAX_DELAY);
         xQueuePeek(xRightQueue, &right_sensor_distance, portMAX_DELAY);
         xQueuePeek(xLeftQueue, &left_sensor_distance, portMAX_DELAY);
-        printf("Left Distance = %d, Front Distance = %d, R, Right Distance = %d\n", left_sensor_distance, front_sensor_distance, right_sensor_distance);
+        // printf("Left Distance = %d, Front Distance = %d, R, Right Distance = %d\n", left_sensor_distance, front_sensor_distance, right_sensor_distance);
 
         float proportional_turn = 0;
         if(left_sensor_distance <= MIN_SIDE_DISTANCE_TO_TURN || right_sensor_distance <= MIN_SIDE_DISTANCE_TO_TURN || front_sensor_distance <= MAX_FRONT_DISTANCE_TO_TURN) {
@@ -434,8 +551,8 @@ void servo_task(void *pvParameters) {
         
         // Reverse the turning direction if the motor is going backwards
         if(front_sensor_distance <= MIN_FRONT_DISTANCE) value_to_turn *= -1;
-        printf("Proportional Term = %f, Integral Term = %f, Derivative Term = %f\n", proportional_term, integral_term, derivative_term);
-        printf("\tValue To Turn = %f\n", value_to_turn);
+        /*printf("Proportional Term = %f, Integral Term = %f, Derivative Term = %f\n", proportional_term, integral_term, derivative_term);
+        printf("\tValue To Turn = %f\n", value_to_turn);*/
         current_micros = MIDDLE_MICROS + value_to_turn;
         if(current_micros <= MIN_SERVO_MICROS) current_micros = MIN_SERVO_MICROS;
         if(current_micros >= MAX_SERVO_MICROS) current_micros = MAX_SERVO_MICROS;
@@ -450,6 +567,11 @@ void servo_task(void *pvParameters) {
 
 void motor_task(void *pvParameters) {
     const uint motor_pin = MOTOR_ESC_PIN;
+
+    printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
+    printf("Motor Task is started!\n");
+    printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
+
     // Motor Conversion Rate     ==>     1000 = Reverse Max,     1500 = Stop,    2000 = Forward Max.   
     const float CONVERSION_RATE = (float)(MAX_MOTOR_FORWARD_MICROS - MIN_MOTOR_FORWARD_MICROS) / (MAX_FRONT_DISTANCE);
     float current_micros = MOTOR_BRAKE_MICROS;
@@ -496,7 +618,7 @@ void motor_task(void *pvParameters) {
                 if(current_micros > MAX_MOTOR_FORWARD_MICROS) current_micros = MAX_MOTOR_FORWARD_MICROS;
             }
         }
-        /*printf("\nReceived Motor Input = %f\n", current_micros);*/
+        printf("\nReceived Motor Input = %f\n", current_micros);
         setMillis(motor_pin, current_micros);
         xQueueOverwrite(xMotorQueue, &current_micros);
         // Store previous speed for future use
@@ -528,6 +650,7 @@ int main()
     BaseType_t xFront_Sensor_Returned;
     BaseType_t xRigth_Sensor_Returned;
     BaseType_t xLeft_Sensor_Returned;
+    BaseType_t xMpu6050_Sensor_Returned;
     BaseType_t xServo_Task_Returned;
     BaseType_t xMotor_Task_Returned;
 
@@ -545,7 +668,7 @@ int main()
 
     xOled_Screen_Task_Returned = xTaskCreate(oled_screen_task,
                 "OLED_Screen_Task",
-                512,
+                configMINIMAL_STACK_SIZE,
                 NULL,
                 2,
                 &xOled_Screen_Task_Handle);
@@ -556,7 +679,7 @@ int main()
 
     xDht_Sensor_Returned = xTaskCreate(dht_sensor_task,
                 "DHT_Sensor_Task",
-                512,
+                configMINIMAL_STACK_SIZE,
                 NULL,
                 2,
                 &xDht_Sensor_Handle);
@@ -567,9 +690,9 @@ int main()
 
     xFront_Sensor_Returned = xTaskCreate(front_sensor_task, 
                 "Front_Servor_Task", 
-                512, 
+                configMINIMAL_STACK_SIZE, 
                 NULL, 
-                5, 
+                6, 
                 &xFront_Sensor_Handle);
     if(xLed_Task_Returned != pdPASS) {
         printf("Led Task could not be created\n");
@@ -578,9 +701,9 @@ int main()
   
     xRigth_Sensor_Returned = xTaskCreate(right_sensor_task, 
                 "Right_Servor_Task", 
-                512, 
+                configMINIMAL_STACK_SIZE, 
                 NULL, 
-                4, 
+                5, 
                 &xRight_Sensor_Handle);
     if(xRigth_Sensor_Returned != pdPASS) {
         printf("Right Sensor Task could not be created\n");
@@ -589,20 +712,31 @@ int main()
 
     xLeft_Sensor_Returned = xTaskCreate(left_sensor_task, 
                 "Left_Servor_Task", 
-                512, 
+                configMINIMAL_STACK_SIZE, 
                 NULL, 
-                4, 
+                5, 
                 &xLeft_Sensor_Handle);                                
     if(xLeft_Sensor_Returned != pdPASS) {
         printf("Left Sensor Task could not be created\n");
         return 0;
     }
 
+    /*xMpu6050_Sensor_Returned = xTaskCreate(mpu6050_task,
+                "MPU6050_Sensor_Task",
+                configMINIMAL_STACK_SIZE * 4,
+                NULL,
+                3,
+                &xMpu6050_Sensor_Handle);
+    if(xMpu6050_Sensor_Returned != pdPASS){
+        printf("MPU6050 Sensor Task could not be created\n");
+        return 0;
+    }*/
+
     xMotor_Task_Returned = xTaskCreate(motor_task, 
                 "Motor_Task", 
-                1024, 
+                configMINIMAL_STACK_SIZE * 2, 
                 NULL, 
-                3, 
+                4, 
                 &xMotor_Task_Handle);
     if(xMotor_Task_Returned != pdPASS) {
         printf("Motor Task could not be created\n");
@@ -611,9 +745,9 @@ int main()
 
     xServo_Task_Returned = xTaskCreate(servo_task, 
                 "Servo_Task", 
-                2048, 
+                configMINIMAL_STACK_SIZE * 2, 
                 NULL, 
-                3, 
+                4, 
                 &xServo_Task_Handle);  
     if(xServo_Task_Returned != pdPASS) {
         printf("Servo Task could not be created\n");

@@ -68,6 +68,7 @@ typedef struct {
     bool external_vcc; 	/**< whether display uses external vcc */ 
     uint8_t *buffer;	/**< display buffer */
     size_t bufsize;		/**< buffer size */
+	size_t status;
 } ssd1306_t;
 
 /**

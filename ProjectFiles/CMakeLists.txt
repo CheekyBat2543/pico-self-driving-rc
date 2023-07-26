@@ -4,7 +4,7 @@ add_executable(Folkrace_Car
 
 target_link_libraries(Folkrace_Car pico_stdlib pico_float freertos 
                         hardware_pwm pico_servo hardware_adc pico_ultrasonic
-                        pico_oled dht)
+                        pico_oled dht haw_mpu6050)
 
 pico_enable_stdio_usb(Folkrace_Car 1)
 pico_enable_stdio_uart(Folkrace_Car 0)
