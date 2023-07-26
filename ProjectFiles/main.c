@@ -419,45 +419,36 @@ void mpu6050_task(void *pvParameters) {
     mpu6050_t mpu6050 = mpu6050_init(i2c_default, MPU6050_ADDRESS_A0_GND);
     printf("Initilized MPU6050 sensor\n");
     // Check if the MPU6050 can initialize
-    // taskENTER_CRITICAL();
+
     bool mpu6050_state = mpu6050_begin(&mpu6050);
     if (mpu6050_state) {
+        sleep_ms(250);
         printf("Beginning MPU6050\n");
         // Set scale of gyroscope
-        mpu6050_set_scale(&mpu6050, MPU6050_SCALE_1000DPS);
+        taskENTER_CRITICAL();
+        mpu6050_set_scale(&mpu6050, MPU6050_SCALE_2000DPS);
         // Set range of accelerometer
         mpu6050_set_range(&mpu6050, MPU6050_RANGE_16G);
-
         // Enable temperature, gyroscope and accelerometer readings
         mpu6050_set_temperature_measuring(&mpu6050, false);
         mpu6050_set_gyroscope_measuring(&mpu6050, true);
         mpu6050_set_accelerometer_measuring(&mpu6050, true);
-
-        // Enable free fall, motion and zero motion interrupt flags
-        mpu6050_set_int_free_fall(&mpu6050, false);
-        mpu6050_set_int_motion(&mpu6050, false);
-        mpu6050_set_int_zero_motion(&mpu6050, false);
-
-        // Set motion detection threshold and duration
-        mpu6050_set_motion_detection_threshold(&mpu6050, 2);
-        mpu6050_set_motion_detection_duration(&mpu6050, 5);
-
-        // Set zero motion detection threshold and duration
-        mpu6050_set_zero_motion_detection_threshold(&mpu6050, 4);
-        mpu6050_set_zero_motion_detection_duration(&mpu6050, 2);
+        taskEXIT_CRITICAL();
+        mpu6050_set_dlpf_mode(&mpu6050,  MPU6050_DLPF_2);
 
         mpu6050_calibrate_gyro(&mpu6050, 1000U);
-        // mpu6050_find_offset_values(&mpu6050, 1000U);
+
+        mpu6050_find_offset_values(&mpu6050, 1000U);
         
-        // mpu6050_set_dlpf_mode(&mpu6050,  MPU6050_DLPF_3);
         // mpu6050_set_dhpf_mode(&mpu6050, MPU6050_DHPF_1_25HZ);
     } 
-    // taskEXIT_CRITICAL();
-    vTaskResume(xMotor_Task_Handle);
-    vTaskResume(xServo_Task_Handle);
+
+    vTaskResume(xLed_Task_Handle);
     vTaskResume(xFront_Sensor_Handle);
     vTaskResume(xLeft_Sensor_Handle);
     vTaskResume(xRight_Sensor_Handle);
+    vTaskResume(xServo_Task_Handle);
+    vTaskResume(xMotor_Task_Handle);
     vTaskResume(xDht_Sensor_Handle);
 
     if(mpu6050_state == 0) {
@@ -733,7 +724,7 @@ int main()
 
     xMpu6050_Sensor_Returned = xTaskCreate(mpu6050_task,
                 "MPU6050_Sensor_Task",
-                configMINIMAL_STACK_SIZE * 4,
+                configMINIMAL_STACK_SIZE * 16,
                 NULL,
                 4,
                 &xMpu6050_Sensor_Handle);
@@ -772,6 +763,7 @@ int main()
     vTaskSuspend(xLeft_Sensor_Handle);
     vTaskSuspend(xRight_Sensor_Handle);
     vTaskSuspend(xDht_Sensor_Handle);
+    vTaskSuspend(xLed_Task_Handle);
 
     //start the main loop
     vTaskStartScheduler();
