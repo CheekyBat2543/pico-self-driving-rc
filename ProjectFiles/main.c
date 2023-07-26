@@ -34,11 +34,11 @@
 /*------------------------------------------------------------*/
 #define LED_PIN              25
 
-#define OLED_SDA_PIN         16
-#define OLED_SCL_PIN         17
+#define OLED_SDA_PIN         12
+#define OLED_SCL_PIN         13
 
-#define MPU6050_SDA_PIN      16
-#define MPU6050_SCL_PIN      17
+#define MPU6050_SDA_PIN      12
+#define MPU6050_SCL_PIN      13
 
 #define LEFT_IR_SENSOR_PIN   10
 #define RIGHT_IR_SENSOR_PIN  11
@@ -419,7 +419,9 @@ void mpu6050_task(void *pvParameters) {
     mpu6050_t mpu6050 = mpu6050_init(i2c_default, MPU6050_ADDRESS_A0_GND);
     printf("Initilized MPU6050 sensor\n");
     // Check if the MPU6050 can initialize
-    if (mpu6050_begin(&mpu6050)) {
+    // taskENTER_CRITICAL();
+    bool mpu6050_state = mpu6050_begin(&mpu6050);
+    if (mpu6050_state) {
         printf("Beginning MPU6050\n");
         // Set scale of gyroscope
         mpu6050_set_scale(&mpu6050, MPU6050_SCALE_1000DPS);
@@ -444,31 +446,41 @@ void mpu6050_task(void *pvParameters) {
         mpu6050_set_zero_motion_detection_threshold(&mpu6050, 4);
         mpu6050_set_zero_motion_detection_duration(&mpu6050, 2);
 
-        // mpu6050_calibrate_gyro(&mpu6050, 250U);
-        // mpu6050_find_offset_values(&mpu6050, 2000);
+        mpu6050_calibrate_gyro(&mpu6050, 1000U);
+        // mpu6050_find_offset_values(&mpu6050, 1000U);
         
-        /*mpu6050_set_dlpf_mode(&mpu6050,  MPU6050_DLPF_3);
-        mpu6050_set_dhpf_mode(&mpu6050, MPU6050_DHPF_1_25HZ);*/
-        
-    } else {
-            printf("\n\n\n-------------------------------------------------\n");
-            printf("MPU6050 Task is deleted!\n");
-            printf("---------------------------------------------------\n\n\n");
-            vTaskDelete(NULL);
+        // mpu6050_set_dlpf_mode(&mpu6050,  MPU6050_DLPF_3);
+        // mpu6050_set_dhpf_mode(&mpu6050, MPU6050_DHPF_1_25HZ);
+    } 
+    // taskEXIT_CRITICAL();
+    vTaskResume(xMotor_Task_Handle);
+    vTaskResume(xServo_Task_Handle);
+    vTaskResume(xFront_Sensor_Handle);
+    vTaskResume(xLeft_Sensor_Handle);
+    vTaskResume(xRight_Sensor_Handle);
+    vTaskResume(xDht_Sensor_Handle);
+
+    if(mpu6050_state == 0) {
+        printf("\n\n\n-------------------------------------------------\n");
+        printf("MPU6050 Task is deleted!\n");
+        printf("---------------------------------------------------\n\n\n");
+        vTaskDelete(NULL);
     }
     printf("MPU6050 before while loop\n");
+    TickType_t xNextWaitTime;
+    xNextWaitTime = xTaskGetTickCount(); 
     while (true) {
+        taskENTER_CRITICAL();
         // Fetch all data from the sensor | I2C is only used here
         mpu6050_event(&mpu6050);
 
         // Pointers to float vectors with all the results
         mpu6050_vectorf_t * accel = mpu6050_get_accelerometer(&mpu6050);
         mpu6050_vectorf_t * gyro = mpu6050_get_gyroscope(&mpu6050);
-
+        taskEXIT_CRITICAL();
         printf("Accelerometer ==> x: %.2f, y: %0.2f, z: %0.2f\n", accel->x, accel->y, accel->z);
         printf("Gyroscope     ==> x: %0.2f, y: %0.2f, z: %0.2f\n\n", gyro->x, gyro->y, gyro->z);
-
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        xTaskDelayUntil(&xNextWaitTime, (TickType_t)(50 / portTICK_PERIOD_MS));
     }
 }
 
@@ -478,7 +490,6 @@ void servo_task(void *pvParameters) {
     printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
     printf("Servo task is started!\n");
     printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
-
 
     //Servo Conversion Rate      ==>     1000us = 0 Degrees,   1500us = 60 Degrees,   2000us = 120 Degrees.
     const float MIDDLE_MICROS = (MAX_SERVO_MICROS + MIN_SERVO_MICROS) / 2;
@@ -634,8 +645,7 @@ int main()
 {
     //initiliaze serial communication through USB
     stdio_init_all();
-    sleep_ms(1500);
-
+    sleep_ms(150);
     //Create queue for the side sensors
     xDhtQueue   = xQueueCreate(1, sizeof(float));
     xFrontQueue = xQueueCreate(1, sizeof(int));
@@ -666,7 +676,7 @@ int main()
         return 0;
     }
 
-    xOled_Screen_Task_Returned = xTaskCreate(oled_screen_task,
+    /*xOled_Screen_Task_Returned = xTaskCreate(oled_screen_task,
                 "OLED_Screen_Task",
                 configMINIMAL_STACK_SIZE,
                 NULL,
@@ -675,7 +685,7 @@ int main()
     if(xOled_Screen_Task_Returned != pdPASS) {
         printf("OLED Screen Task could not be created\n");
         return 0;
-    }
+    }*/
 
     xDht_Sensor_Returned = xTaskCreate(dht_sensor_task,
                 "DHT_Sensor_Task",
@@ -721,16 +731,16 @@ int main()
         return 0;
     }
 
-    /*xMpu6050_Sensor_Returned = xTaskCreate(mpu6050_task,
+    xMpu6050_Sensor_Returned = xTaskCreate(mpu6050_task,
                 "MPU6050_Sensor_Task",
                 configMINIMAL_STACK_SIZE * 4,
                 NULL,
-                3,
+                4,
                 &xMpu6050_Sensor_Handle);
     if(xMpu6050_Sensor_Returned != pdPASS){
         printf("MPU6050 Sensor Task could not be created\n");
         return 0;
-    }*/
+    }
 
     xMotor_Task_Returned = xTaskCreate(motor_task, 
                 "Motor_Task", 
@@ -756,6 +766,13 @@ int main()
     printf("All Tasks are successfuly created\n\n");
 
     
+    vTaskSuspend(xMotor_Task_Handle);
+    vTaskSuspend(xServo_Task_Handle);
+    vTaskSuspend(xFront_Sensor_Handle);
+    vTaskSuspend(xLeft_Sensor_Handle);
+    vTaskSuspend(xRight_Sensor_Handle);
+    vTaskSuspend(xDht_Sensor_Handle);
+
     //start the main loop
     vTaskStartScheduler();
 
