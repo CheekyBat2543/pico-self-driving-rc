@@ -176,7 +176,7 @@ void oled_screen_task(void *pvParameters) {
     char temperature_text[15];
 
     // Setup of I2C
-    // i2c_init(i2c0, 400000);
+    i2c_init(i2c0, 400000);
     /*gpio_set_function(i2c_sda_pin, GPIO_FUNC_I2C);
     gpio_set_function(i2c_scl_pin, GPIO_FUNC_I2C);
     gpio_pull_up(i2c_sda_pin); 
@@ -679,7 +679,7 @@ int main()
         return 0;
     }
 
-    /*xOled_Screen_Task_Returned = xTaskCreate(oled_screen_task,
+    xOled_Screen_Task_Returned = xTaskCreate(oled_screen_task,
                 "OLED_Screen_Task",
                 configMINIMAL_STACK_SIZE,
                 NULL,
@@ -688,7 +688,7 @@ int main()
     if(xOled_Screen_Task_Returned != pdPASS) {
         printf("OLED Screen Task could not be created\n");
         return 0;
-    }*/
+    }
 
     xDht_Sensor_Returned = xTaskCreate(dht_sensor_task,
                 "DHT_Sensor_Task",
