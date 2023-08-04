@@ -98,7 +98,7 @@
 #define FRONT_SENSOR_READ_PERIOD            50   // Milliseconds
 #define SIDE_SENSOR_READ_PERIOD             50   // Milliseconds
 #define SERVO_UPDATE_PERIOD                 50   // Milliseconds
-#define MOTOR_UPDATE_PERIOD                 50   // Milliseconds
+#define MOTOR_UPDATE_PERIOD                 5   // Milliseconds
 #define MPU6050_READ_PERIOD                 5   // Milliseconds
 #define LED_BLINK_PERIOD                    1000 // Milliseconds        
 #define OLED_REFRESH_PERIOD                 50   // Milliseconds
@@ -336,7 +336,7 @@ void front_sensor_task(void *pvParameters) {
     float temperature = 27.0f;
     setupUltrasonicPins(front_trig_pin, front_echo_pin);
 
-    #ifdef MEDIAN_SENSOR
+    #ifdef MEDIAN_SENSORS
     int front_distance_array[ARRAY_SIZE] = {0};
     int front_distance_count = 0;
     for(; front_distance_count < ARRAY_SIZE -1; front_distance_count++){
@@ -357,7 +357,7 @@ void front_sensor_task(void *pvParameters) {
 
         #ifdef SIDE_SENSOR_DEMO
         int distance_to_send = 100;
-        #elif defined MEDIAN_SENSOR
+        #elif defined MEDIAN_SENSORS
         front_distance_count++;
         if(front_distance_count > ARRAY_SIZE - 1) front_distance_count = 0;
         front_distance_array[front_distance_count] = front_distance;
@@ -381,16 +381,17 @@ void left_sensor_task(void *pvParameters){
     printf("Left Sensor Task is started!\n");
     printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
 
-    int left_distance_count = 0;
-    int left_distance_array[ARRAY_SIZE] = {0};
     float temperature = 27.0f;
     setupUltrasonicPins(left_trig_pin, left_echo_pin);
-
+    #ifdef MEDIAN_SENSOR
+    int left_distance_count = 0;
+    int left_distance_array[ARRAY_SIZE] = {0};
     for(; left_distance_count < ARRAY_SIZE - 1; left_distance_count++) {
         int left_distance = getCm(left_trig_pin, left_echo_pin);
         if(left_distance > MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
         left_distance_array[left_distance_count] = left_distance;
     }
+    #endif
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount(); 
     while(true) {
@@ -399,15 +400,16 @@ void left_sensor_task(void *pvParameters){
         int left_distance = getCm_with_temperature(left_trig_pin, left_echo_pin, temperature);
         xTaskResumeAll();
         if(left_distance > MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
+
+        #ifdef MEDIAN_SENSOR
         left_distance_count++;
         if(left_distance_count > ARRAY_SIZE-1) left_distance_count = 0;
-
         left_distance_array[left_distance_count] = left_distance;
-
-        #ifdef FRONT_SENSOR_DEMO
+        int distance_to_send = getMedian(left_distance_array, ARRAY_SIZE);
+        #elif defined FRONT_SENSOR_DEMO
         int distance_to_send = MAX_SIDE_DISTANCE_TO_TURN;
         #else
-        int distance_to_send = getMedian(left_distance_array, ARRAY_SIZE);
+        int distance_to_send = left_distance;
         #endif
 
         /*printf("left Distance = %d\n", distance_to_send);*/
@@ -425,16 +427,18 @@ void right_sensor_task(void *pvParameters){
     printf("Right Sensor Task is started!\n");
     printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
 
-    int right_distance_count = 0;
-    int right_distance_array[ARRAY_SIZE] = {0};
     float temperature = 27.0f;
     setupUltrasonicPins(right_trig_pin, right_echo_pin);
 
+    #ifdef MEDIAN_SENSORS
+    int right_distance_count = 0;
+    int right_distance_array[ARRAY_SIZE] = {0};
     for(; right_distance_count < ARRAY_SIZE - 1; right_distance_count++) {
         int right_distance = getCm(right_trig_pin, right_echo_pin);
         if(right_distance > MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
         right_distance_array[right_distance_count] = right_distance;
     }
+    #endif
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount(); 
     while(true) {
@@ -443,15 +447,15 @@ void right_sensor_task(void *pvParameters){
         int right_distance = getCm_with_temperature(right_trig_pin, right_echo_pin, temperature);
         xTaskResumeAll();
         if(right_distance > MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
+        #ifdef MEDIAN_SENSORS
         right_distance_count++;
         if(right_distance_count > ARRAY_SIZE-1) right_distance_count = 0;
-
         right_distance_array[right_distance_count] = right_distance;
-
-        #ifdef FRONT_SENSOR_DEMO
+        int distance_to_send = getMedian(right_distance_array, ARRAY_SIZE);
+        #elif defined FRONT_SENSOR_DEMO
         int distance_to_send = MAX_SIDE_DISTANCE_TO_TURN;
         #else
-        int distance_to_send = getMedian(right_distance_array, ARRAY_SIZE);
+        int distance_to_send = right_distance;
         #endif
 
         /*printf("Right Distance = %d\n", distance_to_send);*/
