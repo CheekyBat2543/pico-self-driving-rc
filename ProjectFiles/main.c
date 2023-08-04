@@ -10,15 +10,16 @@
 
 #include "servo.h"
 #include "ultrasonic.h"
-#include "MPU6050.h"
+#include "inv_mpu6050.h"
+#include "inv_mpu_dmp_motion_driver.h"
 #include "dht.h"
 
 #include "ssd1306.h"
 #include "image.h"
 
-//  #define FRONT_SENSOR_DEMO 1
-//  #define SIDE_SENSOR_DEMO 1
-#define PRINT_GYROSCOPE 1
+//  #define FRONT_SENSOR_DEMO 
+//  #define SIDE_SENSOR_DEMO 
+#define PRINT_GYROSCOPE 
 
 // Trigonometric Macros
 /*------------------------------------------------------------*/
@@ -40,6 +41,7 @@
 
 #define MPU6050_SDA_PIN      12
 #define MPU6050_SCL_PIN      13
+#define MPU6050_INT_PIN      0
 
 #define LEFT_IR_SENSOR_PIN   10
 #define RIGHT_IR_SENSOR_PIN  11
@@ -97,9 +99,9 @@
 #define SIDE_SENSOR_READ_PERIOD             50   // Milliseconds
 #define SERVO_UPDATE_PERIOD                 50   // Milliseconds
 #define MOTOR_UPDATE_PERIOD                 50   // Milliseconds
-#define MPU6050_READ_PERIOD                 20   // Milliseconds
+#define MPU6050_READ_PERIOD                 5   // Milliseconds
 #define LED_BLINK_PERIOD                    1000 // Milliseconds        
-#define OLED_REFRESH_PERIOD                 20   // Milliseconds
+#define OLED_REFRESH_PERIOD                 50   // Milliseconds
 #define DHT_SENSOR_READ_PERIOD              2000 // Milliseconds
 
 /*------------------------------------------------------------*/
@@ -112,8 +114,7 @@ static QueueHandle_t xRightQueue     = NULL;
 static QueueHandle_t xFrontQueue     = NULL;
 static QueueHandle_t xServoQueue     = NULL;
 static QueueHandle_t xMotorQueue     = NULL;
-static QueueHandle_t xAccelQueue     = NULL;
-static QueueHandle_t xGyroQueue      = NULL;
+static QueueHandle_t xMpuQueue       = NULL;
 
 // FreeRTOS task handles
 TaskHandle_t xLed_Task_Handle = NULL;
@@ -122,7 +123,7 @@ TaskHandle_t xDht_Sensor_Handle = NULL;
 TaskHandle_t xFront_Sensor_Handle = NULL;
 TaskHandle_t xLeft_Sensor_Handle = NULL;
 TaskHandle_t xRight_Sensor_Handle = NULL;
-TaskHandle_t xMpu6050_Sensor_Handle = NULL;
+TaskHandle_t xMpu_Sensor_Handle = NULL;
 TaskHandle_t xServo_Task_Handle = NULL;
 TaskHandle_t xMotor_Task_Handle = NULL;
 
@@ -165,10 +166,21 @@ void oled_screen_task(void *pvParameters) {
     int left_sensor_distance = 0;
     int right_sensor_distance = 0;
     #ifdef PRINT_GYROSCOPE
-    mpu6050_vectorf_t accel;
-    accel.x = 0.0f; accel.y = 0.0f; accel.z = 0.0f;
-    mpu6050_vectorf_t gyro;
-    gyro.x = 0.0f; gyro.y = 0.0f; gyro.z = 0.0f;
+    mpu_data_f mpu_data= {
+        .accel_x_f = 0,
+        .accel_y_f = 0,
+        .accel_z_f = 0,
+        .gyro_x_f = 0,
+        .gyro_y_f = 0,
+        .gyro_z_f = 0,
+        .quat_w_f = 0,
+        .quat_x_f = 0,
+        .quat_y_f = 0,
+        .quat_z_f = 0,
+        .pitch = 0,
+        .roll = 0,
+        .yaw = 0
+    };
     #else
     float servo_micros = 0.0f;
     float motor_micros = 0.0f;
@@ -186,18 +198,12 @@ void oled_screen_task(void *pvParameters) {
     char gyro_text_y[15];
     char accel_text_z[15];
     char gyro_text_z[15];
+    char angle_text[30];
     #else
     char servo_text[15];
     char motor_text[15];
     #endif
     char temperature_text[15];
-
-    // Setup of I2C
-    i2c_init(i2c0, 400000);
-    /*gpio_set_function(i2c_sda_pin, GPIO_FUNC_I2C);
-    gpio_set_function(i2c_scl_pin, GPIO_FUNC_I2C);
-    gpio_pull_up(i2c_sda_pin); 
-    gpio_pull_up(i2c_scl_pin);*/
 
     ssd1306_t disp;
     disp.external_vcc = false;
@@ -224,8 +230,7 @@ void oled_screen_task(void *pvParameters) {
         xQueuePeek(xRightQueue, &right_sensor_distance, portMAX_DELAY);
         xQueuePeek(xLeftQueue, &left_sensor_distance, portMAX_DELAY);
         #ifdef PRINT_GYROSCOPE
-        xQueuePeek(xAccelQueue, &accel, portMAX_DELAY);
-        xQueuePeek(xGyroQueue, &gyro, portMAX_DELAY);
+        xQueuePeek(xMpuQueue, &mpu_data, portMAX_DELAY);
         #else
         xQueuePeek(xMotorQueue, &motor_micros, portMAX_DELAY);
         xQueuePeek(xServoQueue, &servo_micros, portMAX_DELAY);
@@ -243,20 +248,23 @@ void oled_screen_task(void *pvParameters) {
 
         snprintf(right_sensor_text, 12, "Right:%3d\0", right_sensor_distance);
         ssd1306_draw_string(&disp, 70, 24, 1, right_sensor_text);  
-        #ifdef PRINT_GYROSCOPE
-        snprintf(accel_text_x, 15,"x:%4.1f\0", accel.x);
-        ssd1306_draw_string(&disp, 1, 38, 1, accel_text_x);
-        snprintf(accel_text_y, 15,"y:%4.1f\0",accel.y);
-        ssd1306_draw_string(&disp, 48, 38, 1, accel_text_y);
-        snprintf(accel_text_z, 15,"z:%4.1f\0", accel.z);
-        ssd1306_draw_string(&disp, 96, 38, 1, accel_text_z);
 
-        snprintf(gyro_text_x, 15,"x:%4.1f\0", gyro.x);
+        #ifdef PRINT_GYROSCOPE
+        snprintf(accel_text_x, 15,"x:%4.1f\0", mpu_data.accel_x_f);
+        ssd1306_draw_string(&disp, 1, 38, 1, accel_text_x);
+        snprintf(accel_text_y, 15,"y:%4.1f\0", mpu_data.accel_y_f);
+        ssd1306_draw_string(&disp, 45, 38, 1, accel_text_y);
+        snprintf(accel_text_z, 15,"z:%4.1f\0", mpu_data.accel_z_f);
+        ssd1306_draw_string(&disp, 93, 38, 1, accel_text_z);
+
+        /*snprintf(gyro_text_z, 15,"z:%4.1f\0", mpu_data.gyro_z_f);
+        snprintf(gyro_text_x, 15,"x:%4.1f\0", mpu_data.gyro_x_f);
         ssd1306_draw_string(&disp, 1, 52, 1, gyro_text_x);
-        snprintf(gyro_text_y, 15,"y:%4.1f\0", gyro.y);
-        ssd1306_draw_string(&disp, 48, 52, 1, gyro_text_y);
-        snprintf(gyro_text_z, 15,"z:%4.1f\0", gyro.z);
-        ssd1306_draw_string(&disp, 96, 52, 1, gyro_text_z);
+        snprintf(gyro_text_y, 15,"y:%4.1f\0", mpu_data.gyro_y_f);
+        ssd1306_draw_string(&disp, 45, 52, 1, gyro_text_y);
+        ssd1306_draw_string(&disp, 93, 52, 1, gyro_text_z);*/
+        snprintf(angle_text, 30, "x:%4.1f y:%4.1f z:%4.1f\0", mpu_data.roll, mpu_data.pitch, mpu_data.yaw);
+        ssd1306_draw_string(&disp, 2, 52, 1, angle_text);
         #else
         snprintf(motor_text, 14, "Motor:%7.1f\0", motor_micros);
         ssd1306_draw_string(&disp, 30, 38, 1, motor_text);
@@ -325,16 +333,18 @@ void front_sensor_task(void *pvParameters) {
     printf("Front Sensor Task is started!\n");
     printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
 
-    int front_distance_array[ARRAY_SIZE] = {0};
-    int front_distance_count = 0;
     float temperature = 27.0f;
     setupUltrasonicPins(front_trig_pin, front_echo_pin);
 
-    /*for(; front_distance_count < ARRAY_SIZE -1; front_distance_count++){
+    #ifdef MEDIAN_SENSOR
+    int front_distance_array[ARRAY_SIZE] = {0};
+    int front_distance_count = 0;
+    for(; front_distance_count < ARRAY_SIZE -1; front_distance_count++){
         int front_distance = getCm(front_trig_pin, front_echo_pin);
         if(front_distance > MAX_FRONT_DISTANCE) front_distance = MAX_FRONT_DISTANCE;
         front_distance_array[front_distance_count] = front_distance;
-    }*/
+    }
+    #endif
 
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount();
@@ -344,18 +354,18 @@ void front_sensor_task(void *pvParameters) {
         int front_distance = getCm_with_temperature(front_trig_pin, front_echo_pin, temperature);
         xTaskResumeAll();
         if(front_distance > MAX_FRONT_DISTANCE) front_distance = MAX_FRONT_DISTANCE;
-        /*front_distance_count++;
-        if(front_distance_count > ARRAY_SIZE - 1) front_distance_count = 0;
-
-        front_distance_array[front_distance_count] = front_distance;
 
         #ifdef SIDE_SENSOR_DEMO
         int distance_to_send = 100;
-        #else 
+        #elif defined MEDIAN_SENSOR
+        front_distance_count++;
+        if(front_distance_count > ARRAY_SIZE - 1) front_distance_count = 0;
+        front_distance_array[front_distance_count] = front_distance;
         int distance_to_send = getMedian(front_distance_array, ARRAY_SIZE);
-        #endif
-        */
+        #else
         int distance_to_send = front_distance;
+        #endif
+        
         /*printf("\nFront Distance = %d\n", distance_to_send);*/
         xQueueOverwrite(xFrontQueue, &distance_to_send);
 
@@ -385,7 +395,9 @@ void left_sensor_task(void *pvParameters){
     xNextWaitTime = xTaskGetTickCount(); 
     while(true) {
         xQueuePeek(xDhtQueue, &temperature, 0);
+        vTaskSuspendAll();
         int left_distance = getCm_with_temperature(left_trig_pin, left_echo_pin, temperature);
+        xTaskResumeAll();
         if(left_distance > MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
         left_distance_count++;
         if(left_distance_count > ARRAY_SIZE-1) left_distance_count = 0;
@@ -427,7 +439,9 @@ void right_sensor_task(void *pvParameters){
     xNextWaitTime = xTaskGetTickCount(); 
     while(true) {
         xQueuePeek(xDhtQueue, &temperature, 0);
+        vTaskSuspendAll();
         int right_distance = getCm_with_temperature(right_trig_pin, right_echo_pin, temperature);
+        xTaskResumeAll();
         if(right_distance > MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
         right_distance_count++;
         if(right_distance_count > ARRAY_SIZE-1) right_distance_count = 0;
@@ -447,50 +461,122 @@ void right_sensor_task(void *pvParameters){
     }
 }
 
-void mpu6050_task(void *pvParameters) {
-    const uint mpu6050_sda_pin = MPU6050_SDA_PIN;
-    const uint mpu6050_scl_pin = MPU6050_SCL_PIN;
+void mpu_task(void * pvParameters) {
+    const uint sda_pin = MPU6050_SDA_PIN;
+    const uint scl_pin = MPU6050_SCL_PIN;
+    const uint int_pin = MPU6050_INT_PIN;
 
-    printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
-    printf("MPU6050 Task is Started!\n");
-    printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
+    struct int_param_s mpu6050_param = {
+        .int_pin = int_pin,
+        .int_event = GPIO_IRQ_LEVEL_LOW,
+        .cb = NULL
+    };
 
-    gpio_init(mpu6050_sda_pin);
-    gpio_init(mpu6050_scl_pin);
-    gpio_set_function(mpu6050_sda_pin, GPIO_FUNC_I2C);
-    gpio_set_function(mpu6050_scl_pin, GPIO_FUNC_I2C);
-    // Don't forget the pull ups! | Or use external ones
-    gpio_pull_up(mpu6050_sda_pin);
-    gpio_pull_up(mpu6050_scl_pin);
-    printf("Setted MPU6050 Pins\n");
-    // Pass in the I2C driver (Important for dual-core operations). The second parameter is the address,
-    // which can change if you connect pin A0 to GND or to VCC.
-    mpu6050_t mpu6050 = mpu6050_init(i2c_default, MPU6050_ADDRESS_A0_GND);
-    printf("Initilized MPU6050 sensor\n");
-    // Check if the MPU6050 can initialize
-
-    bool mpu6050_state = mpu6050_begin(&mpu6050);
-    if (mpu6050_state) {
-        sleep_ms(250);
-        printf("Beginning MPU6050\n");
-        // Set scale of gyroscope
-        vTaskSuspendAll();
-        mpu6050_set_scale(&mpu6050, MPU6050_SCALE_2000DPS);
-        // Set range of accelerometer
-        mpu6050_set_range(&mpu6050, MPU6050_RANGE_16G);
-        // Enable temperature, gyroscope and accelerometer readings
-        mpu6050_set_temperature_measuring(&mpu6050, false);
-        mpu6050_set_gyroscope_measuring(&mpu6050, true);
-        mpu6050_set_accelerometer_measuring(&mpu6050, true);
-        mpu6050_set_dlpf_mode(&mpu6050,  MPU6050_DLPF_5);
-        mpu6050_set_dhpf_mode(&mpu6050, MPU6050_DHPF_1_25HZ);
-
-        mpu6050_calibrate_gyro(&mpu6050, 1000U);
-
-        mpu6050_find_offset_values(&mpu6050, 1000U);
+    mpu_data_f mpu_data= {
+        .accel_x_f = 0,
+        .accel_y_f = 0,
+        .accel_z_f = 0,
+        .gyro_x_f = 0,
+        .gyro_y_f = 0,
+        .gyro_z_f = 0,
+        .quat_w_f = 0,
+        .quat_x_f = 0,
+        .quat_y_f = 0,
+        .quat_z_f = 0,
+        .pitch = 0,
+        .roll = 0,
+        .yaw = 0
+    };
+    xQueueOverwrite(xMpuQueue, &mpu_data);
+    /* Initiliaze I2C. To use i2c1, "#define USE_I2C1" must be added to inv_mpu6050.c */
+    short data[3] = {0, 0, 0};
+    i2c_init(i2c_default, 400 * 1000);
+    gpio_init(sda_pin);
+    gpio_init(scl_pin);
+    gpio_set_function(sda_pin, GPIO_FUNC_I2C);
+    gpio_set_function(scl_pin, GPIO_FUNC_I2C);
+    gpio_pull_up(sda_pin);
+    gpio_pull_up(scl_pin);
+    sleep_ms(200);
+    /* Initiliaze MPU6050 */
+    vTaskSuspendAll();
+    if(mpu_init(&mpu6050_param)) {
+        printf("Could not initiliaze MPU6050\n");
+        vTaskResume(xLed_Task_Handle);
+        vTaskResume(xFront_Sensor_Handle);
+        vTaskResume(xLeft_Sensor_Handle);
+        vTaskResume(xRight_Sensor_Handle);
+        vTaskResume(xServo_Task_Handle);
+        vTaskResume(xMotor_Task_Handle);
+        vTaskResume(xDht_Sensor_Handle);
+        vTaskResume(xOled_Screen_Task_Handle);
         xTaskResumeAll();
-    } 
+        vTaskDelete(NULL);
+    }
+    printf("Mpu is initiliazed.\n");
+    sleep_ms(10);
+    /* To get the best performance from dmp quaternions, Accel = -+2G and Gyro = -+2000DPS is recommended */
+    mpu_set_accel_fsr(2);
+    sleep_ms(10);
+    mpu_set_gyro_fsr(2000);
+    sleep_ms(10);
+    /* Initiliaze low pass filter and high pass filter */
+    mpu_set_lpf(42);
+    sleep_ms(10);
+    mpu_set_hpf(MPU6050_DHPF_1_25HZ);
+    sleep_ms(10);
+    /* RP2020 can easily handle 1khz reading speed from MPU6050*/
+    mpu_set_sample_rate(1000);
+    sleep_ms(10);
+    /* Configure which sensors are pushed to the FIFO */
+    mpu_configure_fifo(INV_XYZ_GYRO | INV_XYZ_ACCEL);
+    sleep_ms(10);
+    mpu_set_sensors(INV_XYZ_GYRO | INV_XYZ_ACCEL);
+    sleep_ms(10);
+    /* Get the accelerometer and gyroscope conversion factor to convert hardware units to G or DPS. 
+    Formula is: (Hardware_Units / Sensor_Sensitivity) */
+    unsigned short accel_sens = 0.0f;
+    float gyro_sens = 0.0f;
+    mpu_get_accel_sens(&accel_sens);
+    mpu_get_gyro_sens(&gyro_sens);
 
+    /* Load the firmware of DMP.*/
+    if(dmp_load_motion_driver_firmware()) {
+        printf("DMP could not be initiliazed.\n");
+        vTaskResume(xLed_Task_Handle);
+        vTaskResume(xFront_Sensor_Handle);
+        vTaskResume(xLeft_Sensor_Handle);
+        vTaskResume(xRight_Sensor_Handle);
+        vTaskResume(xServo_Task_Handle);
+        vTaskResume(xMotor_Task_Handle);
+        vTaskResume(xDht_Sensor_Handle);
+        vTaskResume(xOled_Screen_Task_Handle);
+        xTaskResumeAll();
+        vTaskDelete(NULL);
+    } else {
+        printf("DMP is initiliazed.\n");
+        sleep_ms(100);
+        /* Set FIFO rate of DMP to 200 to get the best performance for quaternion calculations */
+        dmp_set_fifo_rate(200U);
+        sleep_ms(10);
+        /* Enable DMP */
+        mpu_set_dmp_state(1);
+        sleep_ms(100);
+        /* Enable which features are pushed to the fifo. 
+        If DMP_FEATURE_GYRO_CAL is active, the sensor automatically calibrates the gyro if there is no motion for 8 seconds */
+        dmp_enable_feature(DMP_FEATURE_GYRO_CAL | DMP_FEATURE_SEND_RAW_ACCEL | DMP_FEATURE_SEND_CAL_GYRO | DMP_FEATURE_6X_LP_QUAT);
+        sleep_ms(100);
+        /* Calculate the accelerometer and gyroscope by pushing bias values to the registers */
+        long gyro_bias[] = {0, 0, 0};
+        long accel_bias[] = {0, 0, 0};
+        mpu_find_gyro_calibration_biases(gyro_bias);
+        mpu_find_accel_calibration_biases_pid(accel_bias);
+        mpu_set_gyro_bias_reg(gyro_bias);
+        mpu_set_accel_bias_6050_reg(accel_bias);
+        dmp_set_gyro_bias(gyro_bias);
+        dmp_set_accel_bias(accel_bias);
+        sleep_ms(1000);
+    }
     vTaskResume(xLed_Task_Handle);
     vTaskResume(xFront_Sensor_Handle);
     vTaskResume(xLeft_Sensor_Handle);
@@ -499,31 +585,34 @@ void mpu6050_task(void *pvParameters) {
     vTaskResume(xMotor_Task_Handle);
     vTaskResume(xDht_Sensor_Handle);
     vTaskResume(xOled_Screen_Task_Handle);
-
-    if(mpu6050_state == 0) {
-        printf("\n\n\n-------------------------------------------------\n");
-        printf("MPU6050 Task is deleted!\n");
-        printf("---------------------------------------------------\n\n\n");
-        vTaskDelete(NULL);
-    }
-    printf("MPU6050 before while loop\n");
+    xTaskResumeAll();
     TickType_t xNextWaitTime;
-    xNextWaitTime = xTaskGetTickCount(); 
-    while (true) {
-        vTaskSuspendAll();
-        // Fetch all data from the sensor | I2C is only used here
-        mpu6050_event(&mpu6050);
+    xNextWaitTime = xTaskGetTickCount();
 
-        // Pointers to float vectors with all the results
-        mpu6050_vectorf_t * accel = mpu6050_get_accelerometer(&mpu6050);
-        mpu6050_vectorf_t * gyro = mpu6050_get_gyroscope(&mpu6050);
+    while(true) {
+        int16_t gyro[3] = {0, 0, 0};
+        int16_t accel[3] = {0, 0, 0};
+        long quat[4]   = {0, 0, 0, 0};
+        unsigned long timestamp = 0;
+        /* Sensor mask to choose which values are read from the FIFO */
+        short sensors = INV_XYZ_ACCEL | INV_XYZ_GYRO | INV_WXYZ_QUAT;
+        unsigned char more = 0;
+        vTaskSuspendAll();
+        dmp_read_fifo(gyro, accel, quat, &timestamp, &sensors, &more);
+        if(sensors & (INV_XYZ_ACCEL | INV_XYZ_GYRO | INV_WXYZ_QUAT)) {
+            dmp_convert_sensor_data_real_units(&mpu_data, gyro, accel, quat, sensors);
+            /*
+            printf("\nGyro          ==> x: %6.2f, y: %6.2f, z: %6.2f\n", mpu_data.gyro_x_f, mpu_data.gyro_y_f, mpu_data.gyro_z_f);
+            printf("Accelerometer ==> x: %6.2f, y: %6.2f, z: %6.2f\n", mpu_data.accel_x_f, mpu_data.accel_y_f, mpu_data.accel_z_f);
+            printf("Quaternions   ==> w: %6.2f, x: %6.2f, y: %6.2f, z: %6.2f\n", mpu_data.quat_w_f, mpu_data.quat_x_f, mpu_data.quat_y_f, mpu_data.quat_z_f);
+            printf("Angles        ==> Roll: %5.1f, Pitch: %5.1f, Yaw: %5.1f\n", mpu_data.roll, mpu_data.pitch, mpu_data.yaw);
+            */
+        } 
         xTaskResumeAll();
-        xQueueOverwrite(xAccelQueue, accel);
-        xQueueOverwrite(xGyroQueue, gyro);
-        printf("Accelerometer ==> x: %.2f, y: %.2f, z: %.2f\n", accel->x, accel->y, accel->z);
-        printf("Gyroscope     ==> x: %.2f, y: %.2f, z: %.2f\n\n", gyro->x, gyro->y, gyro->z);
-        xTaskDelayUntil(&xNextWaitTime, (TickType_t)(50 / portTICK_PERIOD_MS));
+        xQueueOverwrite(xMpuQueue, &mpu_data);
+        xTaskDelayUntil(&xNextWaitTime, (TickType_t)(MPU6050_READ_PERIOD / portTICK_PERIOD_MS));        
     }
+
 }
 
 void servo_task(void *pvParameters) {
@@ -610,7 +699,7 @@ void servo_task(void *pvParameters) {
         if(current_micros <= MIN_SERVO_MICROS) current_micros = MIN_SERVO_MICROS;
         if(current_micros >= MAX_SERVO_MICROS) current_micros = MAX_SERVO_MICROS;
 
-        printf("\tServo Current Micros = %f\n\n", current_micros);
+        // printf("\tServo Current Micros = %f\n\n", current_micros);
         setMillis(servo_pin, roundToIntervalFloat((current_micros), SERVO_ROUND_INTERVAL));
         
         xQueueOverwrite(xServoQueue, &current_micros);
@@ -671,7 +760,7 @@ void motor_task(void *pvParameters) {
                 if(current_micros > MAX_MOTOR_FORWARD_MICROS) current_micros = MAX_MOTOR_FORWARD_MICROS;
             }
         }
-        printf("\nReceived Motor Input = %f\n", current_micros);
+        // printf("\nReceived Motor Input = %f\n", current_micros);
         setMillis(motor_pin, current_micros);
         xQueueOverwrite(xMotorQueue, &current_micros);
         // Store previous speed for future use
@@ -687,6 +776,7 @@ int main()
 {
     //initiliaze serial communication through USB
     stdio_init_all();
+    set_sys_clock_khz(250 * 1000, true);
     sleep_ms(150);
     //Create queue for the side sensors
     xDhtQueue   = xQueueCreate(1, sizeof(float));
@@ -695,8 +785,7 @@ int main()
     xLeftQueue  = xQueueCreate(1, sizeof(int));
     xServoQueue = xQueueCreate(1, sizeof(float));
     xMotorQueue = xQueueCreate(1, sizeof(float));
-    xAccelQueue = xQueueCreate(1, sizeof(mpu6050_vectorf_t));
-    xGyroQueue = xQueueCreate(1, sizeof(mpu6050_vectorf_t));
+    xMpuQueue   = xQueueCreate(1, sizeof(mpu_data_f));
 
     // Necessary to check if tasks are created
     BaseType_t xLed_Task_Returned;
@@ -705,7 +794,7 @@ int main()
     BaseType_t xFront_Sensor_Returned;
     BaseType_t xRigth_Sensor_Returned;
     BaseType_t xLeft_Sensor_Returned;
-    BaseType_t xMpu6050_Sensor_Returned;
+    BaseType_t xMpu_Sensor_Returned;
     BaseType_t xServo_Task_Returned;
     BaseType_t xMotor_Task_Returned;
 
@@ -776,13 +865,13 @@ int main()
         return 0;
     }
 
-    xMpu6050_Sensor_Returned = xTaskCreate(mpu6050_task,
+    xMpu_Sensor_Returned = xTaskCreate(mpu_task,
                 "MPU6050_Sensor_Task",
-                configMINIMAL_STACK_SIZE * 16,
+                configMINIMAL_STACK_SIZE * 4,
                 NULL,
-                4,
-                &xMpu6050_Sensor_Handle);
-    if(xMpu6050_Sensor_Returned != pdPASS){
+                3,
+                &xMpu_Sensor_Handle);
+    if(xMpu_Sensor_Returned != pdPASS){
         printf("MPU6050 Sensor Task could not be created\n");
         return 0;
     }
