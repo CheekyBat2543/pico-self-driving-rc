@@ -235,38 +235,38 @@ void oled_screen_task(void *pvParameters) {
         vTaskSuspendAll();
         ssd1306_clear(&disp);
 
-        snprintf(front_sensor_text, 12, "Front: %d\0", front_sensor_distance);
+        snprintf(front_sensor_text, 12, "Front:%3d\0", front_sensor_distance);
         ssd1306_draw_string(&disp, 28, 10, 1, front_sensor_text);
 
-        snprintf(left_sensor_text, 12, "Left: %d\0", left_sensor_distance);
+        snprintf(left_sensor_text, 12, "Left:%3d\0", left_sensor_distance);
         ssd1306_draw_string(&disp, 10, 24, 1, left_sensor_text);
 
-        snprintf(right_sensor_text, 12, "Right: %d\0", right_sensor_distance);
+        snprintf(right_sensor_text, 12, "Right:%3d\0", right_sensor_distance);
         ssd1306_draw_string(&disp, 70, 24, 1, right_sensor_text);  
         #ifdef PRINT_GYROSCOPE
-        snprintf(accel_text_x, 15,"x:%.1f\0", accel.x);
+        snprintf(accel_text_x, 15,"x:%4.1f\0", accel.x);
         ssd1306_draw_string(&disp, 1, 38, 1, accel_text_x);
-        snprintf(accel_text_y, 15,"y:%.1f\0",accel.y);
+        snprintf(accel_text_y, 15,"y:%4.1f\0",accel.y);
         ssd1306_draw_string(&disp, 48, 38, 1, accel_text_y);
-        snprintf(accel_text_z, 15,"z:%.1f\0", accel.z);
+        snprintf(accel_text_z, 15,"z:%4.1f\0", accel.z);
         ssd1306_draw_string(&disp, 96, 38, 1, accel_text_z);
 
-        snprintf(gyro_text_x, 15,"x:%.1f\0", gyro.x);
+        snprintf(gyro_text_x, 15,"x:%4.1f\0", gyro.x);
         ssd1306_draw_string(&disp, 1, 52, 1, gyro_text_x);
-        snprintf(gyro_text_y, 15,"y:%.1f\0", gyro.y);
+        snprintf(gyro_text_y, 15,"y:%4.1f\0", gyro.y);
         ssd1306_draw_string(&disp, 48, 52, 1, gyro_text_y);
-        snprintf(gyro_text_z, 15,"z:%.1f\0", gyro.z);
+        snprintf(gyro_text_z, 15,"z:%4.1f\0", gyro.z);
         ssd1306_draw_string(&disp, 96, 52, 1, gyro_text_z);
         #else
-        snprintf(motor_text, 14, "Motor: %.1f\0", motor_micros);
+        snprintf(motor_text, 14, "Motor:%7.1f\0", motor_micros);
         ssd1306_draw_string(&disp, 30, 38, 1, motor_text);
 
-        snprintf(servo_text, 14, "Servo: %.1f\0", servo_micros);
+        snprintf(servo_text, 14, "Servo:%7.1f\0", servo_micros);
         ssd1306_draw_string(&disp, 2, 52, 1, servo_text);
         #endif
 
 
-        snprintf(temperature_text, 14, "%.1fC\0", temperature, degree_symbol);
+        snprintf(temperature_text, 14, "%3.1fC\0", temperature, degree_symbol);
         ssd1306_draw_string(&disp, 95, 10, 1, temperature_text);
 
         ssd1306_show(&disp);
@@ -330,19 +330,21 @@ void front_sensor_task(void *pvParameters) {
     float temperature = 27.0f;
     setupUltrasonicPins(front_trig_pin, front_echo_pin);
 
-    for(; front_distance_count < ARRAY_SIZE -1; front_distance_count++){
+    /*for(; front_distance_count < ARRAY_SIZE -1; front_distance_count++){
         int front_distance = getCm(front_trig_pin, front_echo_pin);
         if(front_distance > MAX_FRONT_DISTANCE) front_distance = MAX_FRONT_DISTANCE;
         front_distance_array[front_distance_count] = front_distance;
-    }
+    }*/
 
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount();
     while(true) {
         xQueuePeek(xDhtQueue, &temperature, 0);
+        vTaskSuspendAll();
         int front_distance = getCm_with_temperature(front_trig_pin, front_echo_pin, temperature);
+        xTaskResumeAll();
         if(front_distance > MAX_FRONT_DISTANCE) front_distance = MAX_FRONT_DISTANCE;
-        front_distance_count++;
+        /*front_distance_count++;
         if(front_distance_count > ARRAY_SIZE - 1) front_distance_count = 0;
 
         front_distance_array[front_distance_count] = front_distance;
@@ -352,7 +354,8 @@ void front_sensor_task(void *pvParameters) {
         #else 
         int distance_to_send = getMedian(front_distance_array, ARRAY_SIZE);
         #endif
-        
+        */
+        int distance_to_send = front_distance;
         /*printf("\nFront Distance = %d\n", distance_to_send);*/
         xQueueOverwrite(xFrontQueue, &distance_to_send);
 
