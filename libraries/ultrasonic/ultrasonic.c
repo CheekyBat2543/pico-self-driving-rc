@@ -7,7 +7,7 @@
 
 int timeout = 26100;
 
-void setupUltrasonicPins(uint trigPin, uint echoPin)
+void ultrasonic_setup_pins(uint trigPin, uint echoPin)
 {
     gpio_init(trigPin);
     gpio_init(echoPin);
@@ -16,7 +16,7 @@ void setupUltrasonicPins(uint trigPin, uint echoPin)
     gpio_put(trigPin, 0);
 }
 
-uint64_t getPulse(uint trigPin, uint echoPin)
+uint64_t ultrasonic_get_pulse(uint trigPin, uint echoPin)
 {
     gpio_put(trigPin, 1);
     sleep_us(10);
@@ -41,20 +41,34 @@ uint64_t getPulse(uint trigPin, uint echoPin)
     return absolute_time_diff_us(startTime, endTime);
 }
 
-uint64_t getCm(uint trigPin, uint echoPin)
+uint64_t ultrasonic_get_distance_cm(uint trigPin, uint echoPin)
 {
-    uint64_t pulseLength = getPulse(trigPin, echoPin);
+    uint64_t pulseLength = ultrasonic_get_pulse(trigPin, echoPin);
     return pulseLength * 0.017f;
 }
 
-uint64_t getCm_with_temperature(uint trigPin, uint echoPin, float temperature)
+uint64_t ultrasonic_get_distance_temprerature_compansated_cm(uint trigPin, uint echoPin, float temperature)
 {
-    uint64_t pulseLength = getPulse(trigPin, echoPin);
+    uint64_t pulseLength = ultrasonic_get_pulse(trigPin, echoPin);
     return pulseLength * (331.0f + 0.6f * temperature) / 10000 / 2;
 }
 
-uint64_t getInch(uint trigPin, uint echoPin)
+uint64_t ultrasonic_get_inch(uint trigPin, uint echoPin)
 {
-    uint64_t pulseLength = getPulse(trigPin, echoPin);
+    uint64_t pulseLength = ultrasonic_get_pulse(trigPin, echoPin);
     return (long)pulseLength / 74.f / 2.f;
+}
+
+int ultrasonic_lpf(int sensor_reading, float filterValue, float smoothedValue){
+  
+  // Checking validity of filterValue; if beyond range, set to max/min value if out of range.
+  if (filterValue > 1){      
+    filterValue = .99;
+  }
+  else if (filterValue <= 0){
+    filterValue = 0;
+  }
+  
+  smoothedValue = (sensor_reading * (1 - filterValue)) + (smoothedValue  *  filterValue);
+  return (int)smoothedValue;
 }

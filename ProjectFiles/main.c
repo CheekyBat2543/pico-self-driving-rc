@@ -19,6 +19,8 @@
 
 //  #define FRONT_SENSOR_DEMO 
 //  #define SIDE_SENSOR_DEMO 
+// #define MEDIAN_SENSOR
+#define LOW_PASS_FILTER_SENSOR
 #define PRINT_GYROSCOPE 
 
 // Trigonometric Macros
@@ -250,8 +252,7 @@ void oled_screen_task(void *pvParameters) {
     ssd1306_draw_string_with_font(&disp, 8, 24, 1, BMSPA_font,"Starting");
     ssd1306_show(&disp);
     sleep_ms(800);
-    ssd1306_clear(&disp);
-    ssd1306_draw_string_with_font(&disp, 8, 24, 1, BMSPA_font,"Calibration");
+    ssd1306_draw_string_with_font(&disp, 8, 38, 1, BMSPA_font,"Calibration");
     ssd1306_show(&disp);
     sleep_ms(25);
 
@@ -379,16 +380,18 @@ void front_sensor_task(void *pvParameters) {
     printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
 
     float temperature = 27.0f;
-    setupUltrasonicPins(front_trig_pin, front_echo_pin);
+    ultrasonic_setup_pins(front_trig_pin, front_echo_pin);
 
     #ifdef MEDIAN_SENSORS
     int front_distance_array[ARRAY_SIZE] = {0};
     int front_distance_count = 0;
     for(; front_distance_count < ARRAY_SIZE -1; front_distance_count++){
-        int front_distance = getCm(front_trig_pin, front_echo_pin);
+        int front_distance = ultrasonic_get_distance_cm(front_trig_pin, front_echo_pin);
         if(front_distance > MAX_FRONT_DISTANCE) front_distance = MAX_FRONT_DISTANCE;
         front_distance_array[front_distance_count] = front_distance;
     }
+    #elif defined LOW_PASS_FILTER_SENSOR
+    int prev_front_distance = 0;
     #endif
 
     TickType_t xNextWaitTime;
@@ -396,7 +399,7 @@ void front_sensor_task(void *pvParameters) {
     while(true) {
         xQueuePeek(xDhtQueue, &temperature, 0);
         vTaskSuspendAll();
-        int front_distance = getCm_with_temperature(front_trig_pin, front_echo_pin, temperature);
+        int front_distance = ultrasonic_get_distance_temprerature_compansated_cm(front_trig_pin, front_echo_pin, temperature);
         xTaskResumeAll();
         if(front_distance > MAX_FRONT_DISTANCE) front_distance = MAX_FRONT_DISTANCE;
 
@@ -407,6 +410,9 @@ void front_sensor_task(void *pvParameters) {
         if(front_distance_count > ARRAY_SIZE - 1) front_distance_count = 0;
         front_distance_array[front_distance_count] = front_distance;
         int distance_to_send = getMedian(front_distance_array, ARRAY_SIZE);
+        #elif defined LOW_PASS_FILTER_SENSOR
+        int distance_to_send = ultrasonic_lpf(front_distance, 0.8f, prev_front_distance);
+        prev_front_distance = distance_to_send;
         #else
         int distance_to_send = front_distance;
         #endif
@@ -427,12 +433,12 @@ void left_sensor_task(void *pvParameters){
     printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
 
     float temperature = 27.0f;
-    setupUltrasonicPins(left_trig_pin, left_echo_pin);
+    ultrasonic_setup_pins(left_trig_pin, left_echo_pin);
     #ifdef MEDIAN_SENSOR
     int left_distance_count = 0;
     int left_distance_array[ARRAY_SIZE] = {0};
     for(; left_distance_count < ARRAY_SIZE - 1; left_distance_count++) {
-        int left_distance = getCm(left_trig_pin, left_echo_pin);
+        int left_distance = ultrasonic_get_distance_cm(left_trig_pin, left_echo_pin);
         if(left_distance > MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
         left_distance_array[left_distance_count] = left_distance;
     }
@@ -442,7 +448,7 @@ void left_sensor_task(void *pvParameters){
     while(true) {
         xQueuePeek(xDhtQueue, &temperature, 0);
         vTaskSuspendAll();
-        int left_distance = getCm_with_temperature(left_trig_pin, left_echo_pin, temperature);
+        int left_distance = ultrasonic_get_distance_temprerature_compansated_cm(left_trig_pin, left_echo_pin, temperature);
         xTaskResumeAll();
         if(left_distance > MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
 
@@ -473,13 +479,13 @@ void right_sensor_task(void *pvParameters){
     printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
 
     float temperature = 27.0f;
-    setupUltrasonicPins(right_trig_pin, right_echo_pin);
+    ultrasonic_setup_pins(right_trig_pin, right_echo_pin);
 
     #ifdef MEDIAN_SENSORS
     int right_distance_count = 0;
     int right_distance_array[ARRAY_SIZE] = {0};
     for(; right_distance_count < ARRAY_SIZE - 1; right_distance_count++) {
-        int right_distance = getCm(right_trig_pin, right_echo_pin);
+        int right_distance = ultrasonic_get_distance_cm(right_trig_pin, right_echo_pin);
         if(right_distance > MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
         right_distance_array[right_distance_count] = right_distance;
     }
@@ -489,7 +495,7 @@ void right_sensor_task(void *pvParameters){
     while(true) {
         xQueuePeek(xDhtQueue, &temperature, 0);
         vTaskSuspendAll();
-        int right_distance = getCm_with_temperature(right_trig_pin, right_echo_pin, temperature);
+        int right_distance = ultrasonic_get_distance_temprerature_compansated_cm(right_trig_pin, right_echo_pin, temperature);
         xTaskResumeAll();
         if(right_distance > MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
         #ifdef MEDIAN_SENSORS
