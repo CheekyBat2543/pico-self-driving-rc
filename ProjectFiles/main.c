@@ -15,7 +15,7 @@
 #include "dht.h"
 
 #include "ssd1306.h"
-#include "image.h"
+#include "BMSPA_font.h"
 
 //  #define FRONT_SENSOR_DEMO 
 //  #define SIDE_SENSOR_DEMO 
@@ -91,6 +91,12 @@
 #define MOTOR_FORWARD_ACTIVATION_MICROS     2000 // Microseconds
 #define MOTOR_BACKWARD_ACTIVATION_MICROS    1000 // Microseconds
 
+#define MPU_SAMPLE_RATE                     1000 // HZ
+#define MPU_FIFO_RATE                       200  // HZ
+#define MPU_LOW_PASS_FILTER                 42   // HZ
+#define MPU_ACCEL_FSR                       2    // G
+#define MPU_GYRO_FSR                        2000 // DPS
+
 #define SERVO_ROUND_INTERVAL                10 
 
 //Time in milliseconds
@@ -160,6 +166,15 @@ void oled_screen_task(void *pvParameters) {
     printf("\n+++++++++++++++++++++++++++++++++++++++++++++++++++\n");
     printf("OLED Screen task is started!\n");
     printf("+++++++++++++++++++++++++++++++++++++++++++++++++++\n\n");
+
+    i2c_init(i2c_default, 400 * 1000);
+    gpio_init(i2c_sda_pin);
+    gpio_init(i2c_scl_pin);
+    gpio_set_function(i2c_sda_pin, GPIO_FUNC_I2C);
+    gpio_set_function(i2c_scl_pin, GPIO_FUNC_I2C);
+    gpio_pull_up(i2c_sda_pin);
+    gpio_pull_up(i2c_scl_pin);
+
     const char degree_symbol = 248;
     vTaskDelay(250 / portTICK_PERIOD_MS);
     int front_sensor_distance = 0;
@@ -213,14 +228,44 @@ void oled_screen_task(void *pvParameters) {
     xTaskResumeAll();
     // Delete the task if an OLED screen is not connected 
     if(sensor_is_connected != true) {
+        vTaskResume(xMpu_Sensor_Handle);
         vTaskDelete(NULL);
     }
     vTaskSuspendAll();
     ssd1306_clear(&disp);
-    xTaskResumeAll();
+    for(int y=0; y<31; ++y) {
+        ssd1306_draw_line(&disp, 0, y, 127, y);
+        ssd1306_show(&disp);
+        sleep_ms(20);
+        ssd1306_clear(&disp);
+    }
+    for(int y=0, i=1; y>=0; y+=i) {
+            ssd1306_draw_line(&disp, 0, 31-y, 127, 31+y);
+            ssd1306_draw_line(&disp, 0, 31+y, 127, 31-y);
+            ssd1306_show(&disp);
+            sleep_ms(20);
+            ssd1306_clear(&disp);
+            if(y==32) i=-1;
+    }
+    ssd1306_draw_string_with_font(&disp, 8, 24, 1, BMSPA_font,"Starting");
+    ssd1306_show(&disp);
+    sleep_ms(800);
+    ssd1306_clear(&disp);
+    ssd1306_draw_string_with_font(&disp, 8, 24, 1, BMSPA_font,"Calibration");
+    ssd1306_show(&disp);
+    sleep_ms(25);
 
+    xTaskResumeAll();
+    vTaskResume(xMpu_Sensor_Handle);
+    if(disp.status == false) {
+        printf("\n-------------------------------------------------\n");
+        printf("OLED TASK IS DELETED\n");
+        printf("---------------------------------------------------\n\n");
+        vTaskDelete(NULL);
+    }    
     /*ssd1306_bmp_show_image(&disp, image_data, image_size);
     ssd1306_show(&disp);*/
+
 
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount();
@@ -494,13 +539,6 @@ void mpu_task(void * pvParameters) {
     xQueueOverwrite(xMpuQueue, &mpu_data);
     /* Initiliaze I2C. To use i2c1, "#define USE_I2C1" must be added to inv_mpu6050.c */
     short data[3] = {0, 0, 0};
-    i2c_init(i2c_default, 400 * 1000);
-    gpio_init(sda_pin);
-    gpio_init(scl_pin);
-    gpio_set_function(sda_pin, GPIO_FUNC_I2C);
-    gpio_set_function(scl_pin, GPIO_FUNC_I2C);
-    gpio_pull_up(sda_pin);
-    gpio_pull_up(scl_pin);
     sleep_ms(200);
     /* Initiliaze MPU6050 */
     vTaskSuspendAll();
@@ -520,17 +558,17 @@ void mpu_task(void * pvParameters) {
     printf("Mpu is initiliazed.\n");
     sleep_ms(10);
     /* To get the best performance from dmp quaternions, Accel = -+2G and Gyro = -+2000DPS is recommended */
-    mpu_set_accel_fsr(2);
+    mpu_set_accel_fsr(MPU_ACCEL_FSR);
     sleep_ms(10);
-    mpu_set_gyro_fsr(2000);
+    mpu_set_gyro_fsr(MPU_GYRO_FSR);
     sleep_ms(10);
     /* Initiliaze low pass filter and high pass filter */
-    mpu_set_lpf(42);
+    mpu_set_lpf(MPU_LOW_PASS_FILTER);
     sleep_ms(10);
     mpu_set_hpf(MPU6050_DHPF_1_25HZ);
     sleep_ms(10);
     /* RP2020 can easily handle 1khz reading speed from MPU6050*/
-    mpu_set_sample_rate(1000);
+    mpu_set_sample_rate(MPU_SAMPLE_RATE);
     sleep_ms(10);
     /* Configure which sensors are pushed to the FIFO */
     mpu_configure_fifo(INV_XYZ_GYRO | INV_XYZ_ACCEL);
@@ -561,7 +599,7 @@ void mpu_task(void * pvParameters) {
         printf("DMP is initiliazed.\n");
         sleep_ms(100);
         /* Set FIFO rate of DMP to 200 to get the best performance for quaternion calculations */
-        dmp_set_fifo_rate(200U);
+        dmp_set_fifo_rate(MPU_SAMPLE_RATE);
         sleep_ms(10);
         /* Enable DMP */
         mpu_set_dmp_state(1);
@@ -604,6 +642,7 @@ void mpu_task(void * pvParameters) {
         vTaskSuspendAll();
         dmp_read_fifo(gyro, accel, quat, &timestamp, &sensors, &more);
         if(sensors & (INV_XYZ_ACCEL | INV_XYZ_GYRO | INV_WXYZ_QUAT)) {
+            xTaskResumeAll();
             dmp_convert_sensor_data_real_units(&mpu_data, gyro, accel, quat, sensors);
             /*
             printf("\nGyro          ==> x: %6.2f, y: %6.2f, z: %6.2f\n", mpu_data.gyro_x_f, mpu_data.gyro_y_f, mpu_data.gyro_z_f);
@@ -611,8 +650,9 @@ void mpu_task(void * pvParameters) {
             printf("Quaternions   ==> w: %6.2f, x: %6.2f, y: %6.2f, z: %6.2f\n", mpu_data.quat_w_f, mpu_data.quat_x_f, mpu_data.quat_y_f, mpu_data.quat_z_f);
             printf("Angles        ==> Roll: %5.1f, Pitch: %5.1f, Yaw: %5.1f\n", mpu_data.roll, mpu_data.pitch, mpu_data.yaw);
             */
-        } 
-        xTaskResumeAll();
+        } else {
+            xTaskResumeAll();
+        }
         xQueueOverwrite(xMpuQueue, &mpu_data);
         xTaskDelayUntil(&xNextWaitTime, (TickType_t)(MPU6050_READ_PERIOD / portTICK_PERIOD_MS));        
     }
@@ -726,7 +766,7 @@ void motor_task(void *pvParameters) {
     bool brake_condition = true;
     // Initiliaze motor as servo so that we can control it through ESC
     setServo(motor_pin, current_micros);
-    sleep_ms(2000);
+    vTaskDelay(2000);
     TickType_t xNextWaitTime = xTaskGetTickCount();
     while(true) {
         // Wait for the front sensor to send data
@@ -903,7 +943,8 @@ int main()
     }
     printf("All Tasks are successfuly created\n\n");
 
-    vTaskSuspend(xOled_Screen_Task_Handle);
+    vTaskSuspend(xMpu_Sensor_Handle);
+    // vTaskSuspend(xOled_Screen_Task_Handle);
     vTaskSuspend(xMotor_Task_Handle);
     vTaskSuspend(xServo_Task_Handle);
     vTaskSuspend(xFront_Sensor_Handle);
