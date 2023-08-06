@@ -104,9 +104,9 @@
 
 //Time in milliseconds
 #define MOTOR_STATE_CHANGE_INTERVAL         800  // Milliseconds
-#define FRONT_SENSOR_READ_PERIOD            47   // Milliseconds
-#define SIDE_SENSOR_READ_PERIOD             47   // Milliseconds
-#define SERVO_UPDATE_PERIOD                 47   // Milliseconds
+#define FRONT_SENSOR_READ_PERIOD            60   // Milliseconds
+#define SIDE_SENSOR_READ_PERIOD             60   // Milliseconds
+#define SERVO_UPDATE_PERIOD                 60   // Milliseconds
 #define MOTOR_UPDATE_PERIOD                 5   // Milliseconds
 #define MPU6050_READ_PERIOD                 5   // Milliseconds
 #define LED_BLINK_PERIOD                    1000 // Milliseconds        
@@ -443,7 +443,7 @@ void front_sensor_task(void *pvParameters) {
         //update our last's
         P_last = P;
         x_est_last = x_est;
-        // printf("%3d, %3d\n", distance_to_send, front_distance);
+        printf("%3d, %3d\n", distance_to_send, front_distance);
         #else
         int distance_to_send = front_distance;
         #endif
