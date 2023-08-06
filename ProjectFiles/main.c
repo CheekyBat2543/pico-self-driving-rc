@@ -20,7 +20,8 @@
 //  #define FRONT_SENSOR_DEMO 
 //  #define SIDE_SENSOR_DEMO 
 // #define MEDIAN_SENSOR
-#define LOW_PASS_FILTER_SENSOR
+// #define LOW_PASS_FILTER_SENSOR
+#define KALMAN_FILTER_SENSOR
 #define PRINT_GYROSCOPE 
 
 // Trigonometric Macros
@@ -103,9 +104,9 @@
 
 //Time in milliseconds
 #define MOTOR_STATE_CHANGE_INTERVAL         800  // Milliseconds
-#define FRONT_SENSOR_READ_PERIOD            50   // Milliseconds
-#define SIDE_SENSOR_READ_PERIOD             50   // Milliseconds
-#define SERVO_UPDATE_PERIOD                 50   // Milliseconds
+#define FRONT_SENSOR_READ_PERIOD            47   // Milliseconds
+#define SIDE_SENSOR_READ_PERIOD             47   // Milliseconds
+#define SERVO_UPDATE_PERIOD                 47   // Milliseconds
 #define MOTOR_UPDATE_PERIOD                 5   // Milliseconds
 #define MPU6050_READ_PERIOD                 5   // Milliseconds
 #define LED_BLINK_PERIOD                    1000 // Milliseconds        
@@ -392,6 +393,20 @@ void front_sensor_task(void *pvParameters) {
     }
     #elif defined LOW_PASS_FILTER_SENSOR
     int prev_front_distance = 0;
+    #elif defined KALMAN_FILTER_SENSOR
+    //initial values for the kalman filter
+    float x_est_last = 0;
+    float P_last = 0;
+    //the noise in the system
+    float Q = 0.025; // Response time decreases as Q increases
+    float R = 1.0;
+    
+    float K;
+    float P;
+    float P_temp;
+    float x_temp_est;
+    float x_est;
+    float z_measured; //the 'noisy' value we measured
     #endif
 
     TickType_t xNextWaitTime;
@@ -413,6 +428,22 @@ void front_sensor_task(void *pvParameters) {
         #elif defined LOW_PASS_FILTER_SENSOR
         int distance_to_send = ultrasonic_lpf(front_distance, 0.8f, prev_front_distance);
         prev_front_distance = distance_to_send;
+        #elif defined KALMAN_FILTER_SENSOR
+        x_temp_est = x_est_last;
+        P_temp = P_last + Q;
+        //calculate the Kalman gain
+        K = P_temp * (1.0/(P_temp + R));
+        //measure
+        z_measured = front_distance; 
+        //correct
+        x_est = x_temp_est + K * (z_measured - x_temp_est); 
+        P = (1- K) * P_temp;
+        //we have our new system        
+        int distance_to_send = (int)x_est;
+        //update our last's
+        P_last = P;
+        x_est_last = x_est;
+        // printf("%3d, %3d\n", distance_to_send, front_distance);
         #else
         int distance_to_send = front_distance;
         #endif
@@ -442,6 +473,20 @@ void left_sensor_task(void *pvParameters){
         if(left_distance > MAX_SIDE_SENSOR_DISTANCE) left_distance = MAX_SIDE_SENSOR_DISTANCE;
         left_distance_array[left_distance_count] = left_distance;
     }
+    #elif defined KALMAN_FILTER_SENSOR
+    //initial values for the kalman filter
+    float x_est_last = 0;
+    float P_last = 0;
+    //the noise in the system
+    float Q = 0.025; // Response time decreases as Q increases
+    float R = 1.0;
+    
+    float K;
+    float P;
+    float P_temp;
+    float x_temp_est;
+    float x_est;
+    float z_measured; //the 'noisy' value we measured
     #endif
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount(); 
@@ -459,6 +504,22 @@ void left_sensor_task(void *pvParameters){
         int distance_to_send = getMedian(left_distance_array, ARRAY_SIZE);
         #elif defined FRONT_SENSOR_DEMO
         int distance_to_send = MAX_SIDE_DISTANCE_TO_TURN;
+        #elif defined KALMAN_FILTER_SENSOR
+        x_temp_est = x_est_last;
+        P_temp = P_last + Q;
+        //calculate the Kalman gain
+        K = P_temp * (1.0/(P_temp + R));
+        //measure
+        z_measured = left_distance; 
+        //correct
+        x_est = x_temp_est + K * (z_measured - x_temp_est); 
+        P = (1- K) * P_temp;
+        //we have our new system        
+        int distance_to_send = (int)x_est;
+        //update our last's
+        P_last = P;
+        x_est_last = x_est;
+        // printf("%3d, %3d\n", distance_to_send, front_distance);
         #else
         int distance_to_send = left_distance;
         #endif
@@ -489,6 +550,20 @@ void right_sensor_task(void *pvParameters){
         if(right_distance > MAX_SIDE_SENSOR_DISTANCE) right_distance = MAX_SIDE_SENSOR_DISTANCE;
         right_distance_array[right_distance_count] = right_distance;
     }
+    #elif defined KALMAN_FILTER_SENSOR
+    //initial values for the kalman filter
+    float x_est_last = 0;
+    float P_last = 0;
+    //the noise in the system
+    float Q = 0.025; // Response time decreases as Q increases
+    float R = 1.0;
+    
+    float K;
+    float P;
+    float P_temp;
+    float x_temp_est;
+    float x_est;
+    float z_measured; //the 'noisy' value we measured
     #endif
     TickType_t xNextWaitTime;
     xNextWaitTime = xTaskGetTickCount(); 
@@ -505,6 +580,22 @@ void right_sensor_task(void *pvParameters){
         int distance_to_send = getMedian(right_distance_array, ARRAY_SIZE);
         #elif defined FRONT_SENSOR_DEMO
         int distance_to_send = MAX_SIDE_DISTANCE_TO_TURN;
+        #elif defined KALMAN_FILTER_SENSOR
+        x_temp_est = x_est_last;
+        P_temp = P_last + Q;
+        //calculate the Kalman gain
+        K = P_temp * (1.0/(P_temp + R));
+        //measure
+        z_measured = right_distance; 
+        //correct
+        x_est = x_temp_est + K * (z_measured - x_temp_est); 
+        P = (1- K) * P_temp;
+        //we have our new system        
+        int distance_to_send = (int)x_est;
+        //update our last's
+        P_last = P;
+        x_est_last = x_est;
+        // printf("%3d, %3d\n", distance_to_send, front_distance);
         #else
         int distance_to_send = right_distance;
         #endif
@@ -884,7 +975,7 @@ int main()
 
     xFront_Sensor_Returned = xTaskCreate(front_sensor_task, 
                 "Front_Servor_Task", 
-                configMINIMAL_STACK_SIZE, 
+                configMINIMAL_STACK_SIZE * 2, 
                 NULL, 
                 6, 
                 &xFront_Sensor_Handle);
@@ -895,7 +986,7 @@ int main()
   
     xRigth_Sensor_Returned = xTaskCreate(right_sensor_task, 
                 "Right_Servor_Task", 
-                configMINIMAL_STACK_SIZE, 
+                configMINIMAL_STACK_SIZE * 2, 
                 NULL, 
                 5, 
                 &xRight_Sensor_Handle);
@@ -906,7 +997,7 @@ int main()
 
     xLeft_Sensor_Returned = xTaskCreate(left_sensor_task, 
                 "Left_Servor_Task", 
-                configMINIMAL_STACK_SIZE, 
+                configMINIMAL_STACK_SIZE * 2, 
                 NULL, 
                 5, 
                 &xLeft_Sensor_Handle);                                
